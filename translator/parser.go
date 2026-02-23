@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ketank3007/spektr/engine"
+	"github.com/spektr-org/spektr/engine"
 )
 
 // ============================================================================

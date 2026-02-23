@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ketank3007/spektr/engine"
-	"github.com/ketank3007/spektr/schema"
+	"github.com/spektr-org/spektr/engine"
+	"github.com/spektr-org/spektr/schema"
 )
 
 // ============================================================================

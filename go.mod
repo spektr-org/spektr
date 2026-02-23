@@ -1,3 +1,3 @@
-module github.com/ketank3007/spektr
+module github.com/spektr-org/spektr
 
 go 1.21

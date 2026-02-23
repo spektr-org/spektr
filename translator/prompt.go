@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ketank3007/spektr/schema"
+	"github.com/spektr-org/spektr/schema"
 )
 
 // ============================================================================
