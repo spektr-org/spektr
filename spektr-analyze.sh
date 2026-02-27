@@ -74,7 +74,7 @@ echo ""
 # These are generic queries that work across any domain.
 # The AI translator adapts them to the actual schema.
 QUERIES=(
-    "show pie chart by assignee"
+    "show pie chart by severity"
 )
 
 # ── Step 3: Run queries and build output ───────────────────────────────────
