@@ -1,0 +1,10 @@
+Query,Summary
+
+--- show pie chart by assignee ---
+Assignee,Count
+Alice Chen,9
+Bob Patel,8
+Diana Reyes,7
+Charlie Wong,6
+Frank Tanaka,6
+Eve Johnson,4

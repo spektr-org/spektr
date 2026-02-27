@@ -1,0 +1,41 @@
+Issue Key,Summary,Issue Type,Status,Priority,Assignee,Reporter,Component,Sprint,Story Points,Original Estimate (hours),Time Spent (hours),Created,Resolved,Labels
+PROJ-001,User login fails on Safari,Bug,Done,P1 - Critical,Alice Chen,David Kim,Authentication,Sprint 1,3,8,6,2025-11-01,2025-11-05,backend;urgent
+PROJ-002,Implement OAuth2 flow,Story,Done,P2 - High,Bob Patel,Sarah Lee,Authentication,Sprint 1,8,16,18,2025-11-01,2025-11-12,backend;security
+PROJ-003,Update API documentation,Task,Done,P3 - Medium,Charlie Wong,Charlie Wong,Documentation,Sprint 1,2,4,3,2025-11-02,2025-11-06,docs
+PROJ-004,Design new dashboard layout,Story,Done,P2 - High,Diana Reyes,Sarah Lee,Dashboard,Sprint 1,5,12,10,2025-11-03,2025-11-10,frontend;design
+PROJ-005,Fix memory leak in data service,Bug,Done,P1 - Critical,Alice Chen,Bob Patel,Data Pipeline,Sprint 1,5,10,14,2025-11-04,2025-11-11,backend;performance
+PROJ-006,Add export to CSV feature,Story,Done,P3 - Medium,Eve Johnson,David Kim,Dashboard,Sprint 2,3,8,7,2025-11-15,2025-11-20,frontend
+PROJ-007,Database connection pool exhaustion,Bug,Done,P1 - Critical,Bob Patel,Alice Chen,Data Pipeline,Sprint 2,8,16,20,2025-11-15,2025-11-25,backend;urgent;database
+PROJ-008,Create onboarding tutorial,Story,Done,P2 - High,Frank Tanaka,Sarah Lee,Documentation,Sprint 2,5,12,11,2025-11-16,2025-11-22,docs;ux
+PROJ-009,Refactor notification service,Task,Done,P3 - Medium,Alice Chen,Alice Chen,Notifications,Sprint 2,3,6,5,2025-11-17,2025-11-21,backend;tech-debt
+PROJ-010,Mobile responsive header,Bug,Done,P2 - High,Diana Reyes,David Kim,Dashboard,Sprint 2,2,4,3,2025-11-18,2025-11-20,frontend;mobile
+PROJ-011,Implement role-based access control,Story,In Progress,P1 - Critical,Bob Patel,Sarah Lee,Authentication,Sprint 3,13,32,28,2025-12-01,,backend;security
+PROJ-012,Search results pagination broken,Bug,Done,P2 - High,Charlie Wong,Eve Johnson,Search,Sprint 3,3,6,5,2025-12-01,2025-12-04,frontend
+PROJ-013,Add dark mode support,Story,In Progress,P3 - Medium,Diana Reyes,David Kim,Dashboard,Sprint 3,8,20,12,2025-12-02,,frontend;design
+PROJ-014,Write unit tests for auth module,Task,Done,P2 - High,Alice Chen,Bob Patel,Authentication,Sprint 3,5,10,9,2025-12-02,2025-12-06,backend;testing
+PROJ-015,Optimize SQL queries for reports,Task,In Progress,P2 - High,Bob Patel,Alice Chen,Data Pipeline,Sprint 3,5,12,8,2025-12-03,,backend;performance;database
+PROJ-016,Customer feedback widget,Story,To Do,P3 - Medium,Eve Johnson,Sarah Lee,Notifications,Sprint 4,5,12,0,2025-12-15,,frontend;ux
+PROJ-017,Fix timezone handling in scheduler,Bug,In Progress,P1 - Critical,Alice Chen,Frank Tanaka,Data Pipeline,Sprint 4,3,8,4,2025-12-16,,backend
+PROJ-018,API rate limiting implementation,Story,To Do,P2 - High,Bob Patel,Sarah Lee,Authentication,Sprint 4,8,20,0,2025-12-16,,backend;security
+PROJ-019,Accessibility audit fixes,Task,In Progress,P2 - High,Diana Reyes,David Kim,Dashboard,Sprint 4,5,12,6,2025-12-17,,frontend;accessibility
+PROJ-020,Migrate to PostgreSQL 16,Task,To Do,P3 - Medium,Charlie Wong,Bob Patel,Data Pipeline,Sprint 4,3,8,0,2025-12-17,,backend;database;tech-debt
+PROJ-021,Real-time notifications via SSE,Story,To Do,P2 - High,Frank Tanaka,Sarah Lee,Notifications,Sprint 5,8,20,0,2026-01-02,,backend;frontend
+PROJ-022,Fix chart rendering on Firefox,Bug,Done,P3 - Medium,Diana Reyes,Eve Johnson,Dashboard,Sprint 5,2,4,3,2026-01-02,2026-01-04,frontend
+PROJ-023,Implement data export scheduling,Story,In Progress,P2 - High,Alice Chen,David Kim,Data Pipeline,Sprint 5,8,16,10,2026-01-03,,backend
+PROJ-024,Update dependency versions,Task,Done,P4 - Low,Charlie Wong,Charlie Wong,Documentation,Sprint 5,1,2,2,2026-01-03,2026-01-03,tech-debt
+PROJ-025,Search autocomplete suggestions,Story,To Do,P3 - Medium,Eve Johnson,Sarah Lee,Search,Sprint 5,5,12,0,2026-01-04,,frontend;ux
+PROJ-026,Fix CORS issue on staging,Bug,Done,P1 - Critical,Bob Patel,Alice Chen,Authentication,Sprint 5,2,4,3,2026-01-05,2026-01-06,backend;urgent
+PROJ-027,Dashboard performance profiling,Task,To Do,P2 - High,Frank Tanaka,Bob Patel,Dashboard,Sprint 6,5,12,0,2026-01-15,,frontend;performance
+PROJ-028,Implement audit logging,Story,To Do,P1 - Critical,Alice Chen,Sarah Lee,Authentication,Sprint 6,8,20,0,2026-01-15,,backend;security;compliance
+PROJ-029,Fix duplicate email notifications,Bug,In Progress,P2 - High,Frank Tanaka,Eve Johnson,Notifications,Sprint 6,3,6,2,2026-01-16,,backend
+PROJ-030,Add bulk import from Excel,Story,To Do,P3 - Medium,Charlie Wong,David Kim,Data Pipeline,Sprint 6,5,12,0,2026-01-17,,backend;frontend
+PROJ-031,Internationalization framework setup,Story,To Do,P2 - High,Diana Reyes,Sarah Lee,Dashboard,Sprint 6,13,32,0,2026-01-17,,frontend;i18n
+PROJ-032,Fix session timeout not redirecting,Bug,Done,P2 - High,Alice Chen,David Kim,Authentication,Sprint 1,2,4,3,2025-11-05,2025-11-07,frontend;backend
+PROJ-033,Create API versioning strategy doc,Task,Done,P3 - Medium,Charlie Wong,Sarah Lee,Documentation,Sprint 2,2,4,4,2025-11-19,2025-11-21,docs;architecture
+PROJ-034,Implement webhook delivery system,Story,In Progress,P2 - High,Bob Patel,Frank Tanaka,Notifications,Sprint 5,8,20,14,2026-01-04,,backend
+PROJ-035,Fix data truncation on long names,Bug,Done,P3 - Medium,Diana Reyes,Eve Johnson,Dashboard,Sprint 3,1,2,1,2025-12-03,2025-12-04,frontend
+PROJ-036,Load testing infrastructure setup,Task,Done,P2 - High,Frank Tanaka,Bob Patel,Data Pipeline,Sprint 3,5,10,12,2025-12-04,2025-12-10,devops;testing
+PROJ-037,Implement file upload with progress,Story,To Do,P3 - Medium,Eve Johnson,David Kim,Dashboard,Sprint 6,5,12,0,2026-01-18,,frontend;ux
+PROJ-038,Fix race condition in cache layer,Bug,In Progress,P1 - Critical,Alice Chen,Bob Patel,Data Pipeline,Sprint 4,5,10,7,2025-12-18,,backend;performance
+PROJ-039,Add two-factor authentication,Story,To Do,P1 - Critical,Bob Patel,Sarah Lee,Authentication,Sprint 6,13,32,0,2026-01-18,,backend;security
+PROJ-040,Archive old notifications cleanup job,Task,Done,P4 - Low,Frank Tanaka,Frank Tanaka,Notifications,Sprint 2,2,4,3,2025-11-20,2025-11-22,backend;tech-debt

@@ -3,7 +3,11 @@ package schema
 // ============================================================================
 // SCHEMA — Describes the shape of a dataset for the engine + AI translator
 // ============================================================================
-// Auto-discovered from data sources (Tier 1) or built by consumer apps (Tier 3).
+// Built via three discovery modes:
+//   - Auto-Detect (schema/discover.go): Heuristic classification from CSV data
+//   - Smart Refine (schema/refine.go):  One-time AI enrichment of Auto-Detect output
+//   - App-Driven:                       Consumer app builds schema programmatically
+//
 // The translator uses schema metadata to build AI prompts.
 // The engine uses schema for record parsing and measure/dimension resolution.
 // ============================================================================
@@ -26,6 +30,10 @@ type Config struct {
 
 	// Columns skipped during auto-discovery
 	SkippedColumns []SkippedColumn `json:"skippedColumns,omitempty"`
+
+	// Smart Refine metadata (set after AI enrichment)
+	RefinedAt string `json:"refinedAt,omitempty"`
+	RefinedBy string `json:"refinedBy,omitempty"` // "gemini", "openai", "manual"
 }
 
 // DimensionMeta describes a string field used for grouping/filtering.
@@ -43,6 +51,7 @@ type DimensionMeta struct {
 	IsCurrencyCode bool     `json:"isCurrencyCode,omitempty"`
 	CardinalityHint string  `json:"cardinalityHint,omitempty"` // "low", "medium", "high"
 	DerivedFrom    string   `json:"derivedFrom,omitempty"`     // Original column if auto-bucketed
+	SortHint       string   `json:"sortHint,omitempty"`        // Ordinal ordering (e.g., "P1 > P2 > P3 > P4") — set by Smart Refine
 }
 
 // MeasureMeta describes a numeric field used for aggregation.

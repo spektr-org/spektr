@@ -37,7 +37,7 @@ type GeminiTranslator struct {
 // NewGemini creates a new Gemini translator.
 func NewGemini(cfg Config) *GeminiTranslator {
 	if cfg.Model == "" {
-		cfg.Model = "gemini-2.0-flash"
+		cfg.Model = "gemini-2.5-flash-lite"
 	}
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = "https://generativelanguage.googleapis.com/v1beta/models"

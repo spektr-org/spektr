@@ -35,7 +35,7 @@ type TranslateResult struct {
 // Config holds translator configuration.
 type Config struct {
 	APIKey   string // AI provider API key (consumer's key)
-	Model    string // Model name (e.g., "gemini-2.0-flash")
+	Model    string // Model name (e.g., "gemini-2.5-flash-lite")
 	Endpoint string // API endpoint override (empty = default)
 }
 
@@ -43,7 +43,7 @@ type Config struct {
 func DefaultGeminiConfig(apiKey string) Config {
 	return Config{
 		APIKey:   apiKey,
-		Model:    "gemini-2.0-flash",
+		Model:    "gemini-2.5-flash-lite",
 		Endpoint: "https://generativelanguage.googleapis.com/v1beta/models",
 	}
 }

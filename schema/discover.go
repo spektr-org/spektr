@@ -303,6 +303,11 @@ func (col *columnAnalysis) classifyRole(totalRows int) {
 			col.role = roleMeasure
 			return
 		}
+		// Check if column name signals a measure (points, hours, cost, etc.)
+		if isMeasureNameHint(col.key) {
+			col.role = roleMeasure
+			return
+		}
 		// Ratio-based: if few unique values AND low ratio → coded dimension (e.g., priority 1-5)
 		// Absolute < 20 alone fails on small datasets where 6/12 looks "low" but is actually 50%
 		uniqueRatio := float64(col.uniqueCount) / float64(totalRows)
@@ -421,6 +426,33 @@ func isBool(s string) bool {
 }
 
 // ============================================================================
+// MEASURE NAME HEURISTIC
+// ============================================================================
+
+// measureKeywords are column name fragments that strongly signal a measure column.
+// When a low-cardinality integer column has one of these in its name, it should
+// be classified as a measure rather than a coded dimension.
+var measureKeywords = []string{
+	"point", "hour", "cost", "price", "amount", "total",
+	"revenue", "salary", "wage", "budget", "spend", "spent",
+	"estimate", "actual", "score", "rating", "weight",
+	"quantity", "qty", "count", "size", "duration",
+	"distance", "age", "fee", "tax", "profit", "loss",
+	"margin", "balance", "payment", "charge", "value",
+}
+
+// isMeasureNameHint checks if the column key contains a known measure keyword.
+func isMeasureNameHint(key string) bool {
+	lower := strings.ToLower(key)
+	for _, kw := range measureKeywords {
+		if strings.Contains(lower, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// ============================================================================
 // SPECIAL PATTERN DETECTION
 // ============================================================================
 
@@ -496,13 +528,15 @@ func detectTemporalPattern(samples []string) (bool, string) {
 // When multiple valid parents exist, picks the closest (highest cardinality).
 func detectHierarchies(dimensions []DimensionMeta, rows [][]string, headers []string, columns []columnAnalysis) {
 	// Build column index lookup
-	dimIndices := make(map[string]int) // key → column index
-	dimUniques := make(map[string]int) // key → unique count
+	dimIndices := make(map[string]int)  // key → column index
+	dimUniques := make(map[string]int)  // key → unique count
+	dimIsNumericOrigin := make(map[string]bool) // key → was originally numeric
 
 	for _, col := range columns {
 		if col.role == roleDimension {
 			dimIndices[col.key] = col.index
 			dimUniques[col.key] = col.uniqueCount
+			dimIsNumericOrigin[col.key] = col.colType == typeNumeric
 		}
 	}
 
@@ -511,6 +545,11 @@ func detectHierarchies(dimensions []DimensionMeta, rows [][]string, headers []st
 		childKey := dimensions[i].Key
 		childIdx, ok1 := dimIndices[childKey]
 		if !ok1 {
+			continue
+		}
+
+		// Skip numeric-origin columns — hierarchies are categorical, not numeric correlation
+		if dimIsNumericOrigin[childKey] {
 			continue
 		}
 
@@ -524,6 +563,11 @@ func detectHierarchies(dimensions []DimensionMeta, rows [][]string, headers []st
 			parentKey := dimensions[j].Key
 			parentIdx, ok2 := dimIndices[parentKey]
 			if !ok2 {
+				continue
+			}
+
+			// Skip numeric-origin parents too
+			if dimIsNumericOrigin[parentKey] {
 				continue
 			}
 
@@ -618,12 +662,37 @@ func (col *columnAnalysis) toDimension() DimensionMeta {
 
 // toMeasure converts a column analysis into MeasureMeta.
 func (col *columnAnalysis) toMeasure() MeasureMeta {
-	return MeasureMeta{
+	m := MeasureMeta{
 		Key:                col.key,
 		DisplayName:        toDisplayName(col.header),
 		Aggregations:       []string{"sum", "avg", "min", "max", "count"},
 		DefaultAggregation: "sum",
 	}
+
+	// Auto-detect unit from column name
+	lower := strings.ToLower(col.key)
+	switch {
+	case strings.Contains(lower, "hour") || strings.Contains(lower, "duration") || strings.Contains(lower, "minute"):
+		m.Unit = "hours"
+	case strings.Contains(lower, "point") || strings.Contains(lower, "score") || strings.Contains(lower, "rating"):
+		m.Unit = "points"
+		m.DefaultAggregation = "avg" // points/scores are typically averaged
+	case strings.Contains(lower, "cost") || strings.Contains(lower, "price") || strings.Contains(lower, "revenue") ||
+		strings.Contains(lower, "salary") || strings.Contains(lower, "amount") || strings.Contains(lower, "fee") ||
+		strings.Contains(lower, "budget") || strings.Contains(lower, "profit") || strings.Contains(lower, "payment"):
+		m.Unit = "currency"
+		m.IsCurrency = true
+	case strings.Contains(lower, "percent") || strings.Contains(lower, "rate") || strings.Contains(lower, "ratio"):
+		m.Unit = "percent"
+		m.DefaultAggregation = "avg"
+	case strings.Contains(lower, "count") || strings.Contains(lower, "quantity") || strings.Contains(lower, "qty"):
+		m.Unit = "units"
+		m.DefaultAggregation = "sum"
+	case strings.Contains(lower, "weight") || strings.Contains(lower, "distance") || strings.Contains(lower, "size"):
+		m.Unit = "units"
+	}
+
+	return m
 }
 
 // setDefaults configures schema defaults based on discovered dimensions/measures.
