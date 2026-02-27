@@ -2,11 +2,19 @@
 
 **Domain-agnostic analytics engine. Picolytics for any dataset.**
 
-Spektr takes structured data from any domain — finance, project management, security operations, HR — and produces render-ready analytics output: charts, tables, and text summaries. Pair it with an AI translator to get natural language analytics out of the box.
+Spektr takes structured data from any domain — finance, project management, security operations, HR — and produces render-ready analytics output: charts, tables, and text summaries. Feed it a CSV, ask a question in plain English, get answers.
+
+```bash
+# Export CSV from Jira, Salesforce, your bank — anything
+$ spektr --file jira-export.csv --query "show bugs by priority" --format csv --out results.csv
+
+# Open results.csv in Google Sheets → instant chart
+```
 
 ```
-"Show spending by category"  →  AI Translator  →  QuerySpec  →  Spektr Engine  →  Chart JSON
-"Average response time by severity"  →  same pipeline, different data
+"Show spending by category"           →  AI Translator  →  QuerySpec  →  Spektr Engine  →  Chart CSV
+"Average response time by severity"   →  same pipeline, different data
+"Story points by sprint"              →  same pipeline, different data
 ```
 
 ## Why Spektr?
@@ -18,33 +26,151 @@ Most analytics libraries are tightly coupled to their domain. Spektr isn't. It o
 
 Any dataset that has these two things works with Spektr. No schema migration, no ETL pipeline, no database required.
 
+## CLI — The Fastest Way to Use Spektr
+
+Build once, use on any CSV:
+
+```bash
+go build -o ./bin/spektr ./cmd/spektr/
+export GEMINI_API_KEY=your-key
+```
+
+### Analyze any CSV
+
+```bash
+# Get CSV output ready for Google Sheets
+spektr --file jira-export.csv --query "bugs by priority" --format csv --out bugs.csv
+
+# Quick text answer
+spektr --file sales.csv --query "total revenue" --format text
+
+# Pretty JSON with full metadata
+spektr --file hr-data.csv --query "average salary by department" --format pretty
+```
+
+### Auto-detect schema
+
+```bash
+# See what Spektr discovers from your data
+spektr --file data.csv --discover --format pretty
+
+# Enrich with AI (one-time, uses Gemini)
+spektr --file data.csv --discover --refine --format pretty
+
+# Save schema for reuse
+spektr --file data.csv --discover --refine --out schema.json --format pretty
+
+# Query with saved schema (faster — skips discovery)
+spektr --file data.csv --schema schema.json --query "top 5 by total" --format csv
+```
+
+### Batch analysis
+
+Use the included `spektr-analyze.sh` wrapper to run multiple queries at once:
+
+```bash
+chmod +x spektr-analyze.sh
+./spektr-analyze.sh jira-export.csv                          # default output
+./spektr-analyze.sh sales.csv /c/reports/output.csv          # custom output path
+./spektr-analyze.sh data.csv results.csv gemini-2.5-flash-lite  # custom model
+```
+
+### CLI flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--file` | Input CSV file (required) | — |
+| `--query` | Natural language query | — |
+| `--discover` | Print auto-detected schema and exit | false |
+| `--refine` | Apply Smart Refine (AI enrichment) | false |
+| `--format` | Output: `json`, `pretty`, `text`, `csv` | `json` |
+| `--out` | Write to file instead of stdout | stdout |
+| `--schema` | Pre-built schema JSON (skips auto-detect) | — |
+| `--model` | Gemini model name | `gemini-2.5-flash` |
+
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                     YOUR APPLICATION                      │
-├──────────────┬──────────────┬────────────────────────────┤
-│   Translator │    Engine    │     Schema (optional)       │
-│              │              │                             │
-│  NL → Query  │  Query →     │  Describes dataset shape    │
-│  (Gemini,    │  Result      │  for AI prompt building     │
-│   OpenAI)    │  (local,     │  and auto-discovery         │
-│              │   no AI)     │                             │
-│  Optional —  │  ← Core ──→ │  Optional —                 │
-│  bring your  │  zero deps   │  auto or manual             │
-│  own LLM     │  WASM-safe   │                             │
-└──────────────┴──────────────┴────────────────────────────┘
+├──────────┬──────────────┬──────────────┬─────────────────┤
+│   CLI    │  Translator  │    Engine    │     Schema       │
+│          │              │              │                  │
+│  CSV →   │  NL → Query  │  Query →     │  Auto-Detect     │
+│  Query → │  (Gemini,    │  Result      │  (heuristics)    │
+│  CSV out │   OpenAI)    │  (local,     │                  │
+│          │              │   no AI)     │  Smart Refine    │
+│          │  Optional —  │  ← Core ──→ │  (one-time AI    │
+│          │  bring your  │  zero deps   │   enrichment)    │
+│          │  own LLM     │  WASM-safe   │                  │
+└──────────┴──────────────┴──────────────┴─────────────────┘
 ```
 
 The engine has **zero external dependencies** and never calls any AI service. All computation is local. This makes it safe for WASM compilation and privacy-sensitive environments.
 
+## Schema Discovery
+
+Spektr can figure out your data shape automatically — no manual schema definition needed.
+
+### Auto-Detect (heuristic, no AI)
+
+Analyzes CSV headers and values to classify columns:
+
+```bash
+spektr --file jira-export.csv --discover --format pretty
+```
+
+Auto-Detect handles: string dimensions, numeric measures, date/temporal detection, currency code recognition, hierarchy detection (e.g. sub_category → category), high-cardinality ID column skipping, and synthetic `record_count` measure injection.
+
+**Column name intelligence** — columns named "points", "hours", "cost", "price", "salary", "score", "quantity" etc. are correctly classified as measures even when cardinality is low (e.g. story points: 1, 2, 3, 5, 8, 13). Units and default aggregations are inferred automatically:
+
+| Column Name Contains | Unit | Default Aggregation |
+|---------------------|------|-------------------|
+| point, score, rating | points | avg |
+| hour, duration, minute | hours | sum |
+| cost, price, revenue, salary | currency | sum |
+| percent, rate, ratio | percent | avg |
+| count, quantity, qty | units | sum |
+
+### Smart Refine (one-time AI enrichment)
+
+Optionally sends ~500 bytes of column metadata to Gemini for enrichment — display names, descriptions, sort hints, unit corrections, hierarchy suggestions:
+
+```bash
+spektr --file jira-export.csv --discover --refine --format pretty
+```
+
+**Privacy guarantee:** Gemini only sees column names and sample values. Never raw data, never actual amounts. Smart Refine is called once at setup — cache the result and reuse.
+
+What Smart Refine adds: dataset name and description, human-friendly display names, ordinal sort hints (e.g. "P1 > P2 > P3 > P4"), aggregation recommendations, hierarchy suggestions, recovery recommendations for skipped columns.
+
+### Validated Across Domains
+
+Auto-Detect has been validated with test suites across three distinct domains:
+
+| Dataset | Dimensions | Measures | Skipped | Currency | Hierarchies |
+|---------|-----------|----------|---------|----------|-------------|
+| **Jira** (project management) | 10 | 4 | 2 | — | created→sprint |
+| **E-commerce** (retail orders) | 9 | 6 | 1 | ✅ multi-currency | sub_category→category |
+| **HR** (employee data) | 7 | 4 | 2 | — | — |
+
 ## Installation
+
+### As a Go library
 
 ```bash
 go get github.com/spektr-org/spektr
 ```
 
 Requires Go 1.21+.
+
+### As a CLI binary
+
+```bash
+git clone https://github.com/spektr-org/spektr
+cd spektr
+go build -o ./bin/spektr ./cmd/spektr/
+```
 
 ## Quick Start
 
@@ -151,6 +277,15 @@ func main() {
     result, _ := engine.Execute(spec, view, engine.WithDefaultMeasure("amount"))
     fmt.Println(result.Reply) // "Total expenses: SGD 3,300.00"
 }
+```
+
+### Option 3: CSV → Query → CSV (no code)
+
+The simplest path — no Go code needed:
+
+```bash
+export GEMINI_API_KEY=your-key
+spektr --file sales.csv --query "revenue by region" --format csv --out results.csv
 ```
 
 ## Domain Examples
@@ -453,47 +588,57 @@ Rules applied:
 
 ```
 spektr/
-├── engine/          # Core computation — zero dependencies
-│   ├── view.go          # RecordView interface + all implementations
-│   ├── types.go         # QuerySpec, Result, Group, Chart/Table/Text types
-│   ├── filters.go       # Dimension-based filtering → SubView
-│   ├── aggregators.go   # Grouping, aggregation, sorting, formatting
-│   ├── executor.go      # Main pipeline: Execute() + placeholder resolution
-│   ├── chart_builder.go # Groups → ChartConfig
-│   ├── table_builder.go # Groups → TableData
-│   ├── text_builder.go  # Groups → TextData (includes growth)
-│   └── options.go       # Functional options: WithCurrency, WithDefaultMeasure
+├── cmd/
+│   └── spektr/
+│       └── main.go          # CLI binary (v0.2.0)
 │
-├── schema/          # Dataset shape description
-│   ├── schema.go        # Config, DimensionMeta, MeasureMeta types
-│   └── discover.go      # Auto-discovery from CSV/data samples
+├── engine/                  # Core computation — zero dependencies
+│   ├── view.go                  # RecordView interface + all implementations
+│   ├── types.go                 # QuerySpec, Result, Group, Chart/Table/Text types
+│   ├── filters.go               # Dimension-based filtering → SubView
+│   ├── aggregators.go           # Grouping, aggregation, sorting, formatting
+│   ├── executor.go              # Main pipeline: Execute() + placeholder resolution
+│   ├── chart_builder.go         # Groups → ChartConfig
+│   ├── table_builder.go         # Groups → TableData
+│   ├── text_builder.go          # Groups → TextData (includes growth)
+│   └── options.go               # Functional options: WithCurrency, WithDefaultMeasure
 │
-├── translator/      # AI boundary (natural language → QuerySpec)
-│   ├── types.go         # Translator interface, Config
-│   ├── prompt.go        # Schema-driven prompt builder
-│   ├── parser.go        # JSON response parser
-│   └── gemini.go        # Google Gemini implementation
+├── schema/                  # Dataset shape description + discovery
+│   ├── schema.go                # Config, DimensionMeta, MeasureMeta types
+│   ├── discover.go              # Auto-Detect: CSV → schema via heuristics
+│   ├── refine.go                # Smart Refine: one-time Gemini enrichment
+│   ├── discover_test.go         # Auto-Detect test suite
+│   ├── refine_test.go           # Smart Refine test suite (21 tests, all mocked)
+│   └── validate_test.go         # Phase 6 cross-domain validation (Jira, e-commerce, HR)
 │
-├── helpers/         # Convenience utilities
-│   └── csv.go           # CSV → []Record / RecordView parser
+├── translator/              # AI boundary (natural language → QuerySpec)
+│   ├── types.go                 # Translator interface, Config
+│   ├── prompt.go                # Schema-driven prompt builder
+│   ├── parser.go                # JSON response parser
+│   └── gemini.go                # Google Gemini implementation
 │
-└── spektr.go        # Package doc
+├── helpers/                 # Convenience utilities
+│   └── csv.go                   # CSV → []Record / RecordView parser
+│
+├── spektr.go                # Package doc
+└── spektr-analyze.sh        # Batch analysis wrapper script
 ```
 
 ### Dependency Rule
 
 ```
-engine ← has ZERO external dependencies (WASM-safe)
-schema ← no dependency on engine
+engine     ← has ZERO external dependencies (WASM-safe)
+schema     ← no dependency on engine
 translator ← depends on engine (QuerySpec) + schema (Config)
-helpers ← depends on engine + schema
+helpers    ← depends on engine + schema
+cmd/spektr ← depends on all packages (CLI wiring)
 ```
 
 ## Integration Tiers
 
-### Tier 1: Auto-Discovery (CSV / ad-hoc data)
+### Auto-Detect (CSV / ad-hoc data)
 
-Schema auto-discovered from data. Best for quick analysis and demos.
+Schema auto-discovered from data. Best for quick analysis and CLI usage.
 
 ```go
 import (
@@ -504,14 +649,36 @@ import (
 // Auto-discover schema from CSV
 sch, _ := schema.DiscoverFromCSV(csvBytes)
 
+// Optional: enrich with AI (one-time)
+enriched, err := schema.Refine(sch, schema.RefineConfig{APIKey: key, Model: "gemini-2.5-flash"})
+if err != nil {
+    enriched = sch // graceful fallback
+}
+
 // Parse CSV into RecordView
-view, _ := helpers.ParseCSVView(csvBytes, sch)
+view, _ := helpers.ParseCSVView(csvBytes, enriched)
 
 // Execute
 result, _ := engine.Execute(spec, view)
 ```
 
-### Tier 2: Schema-Guided (defined schema, generic records)
+### Smart Refine (optional AI enrichment)
+
+Sends ~500 bytes of column metadata to Gemini for one-time enrichment:
+
+```go
+cfg := schema.RefineConfig{
+    APIKey: os.Getenv("GEMINI_API_KEY"),
+    Model:  "gemini-2.5-flash",
+}
+enriched, err := schema.Refine(draft, cfg)
+```
+
+**What Gemini sees:** column names, data types, 5 sample values per column, row count, detected patterns. **What Gemini never sees:** raw data, actual amounts, user content.
+
+**What Gemini returns:** dataset name/description, display names, sort hints, unit corrections, hierarchy suggestions, recovery recommendations for skipped columns.
+
+### Schema-Guided (defined schema, generic records)
 
 You define the schema explicitly. Records are still generic maps.
 
@@ -528,7 +695,7 @@ sch := schema.Config{
 }
 ```
 
-### Tier 3: App-Driven (typed structs via DomainAdapter)
+### App-Driven (typed structs via DomainAdapter)
 
 Your application has its own data types and metadata store. Use `DomainAdapter` for zero-copy access.
 
@@ -616,6 +783,17 @@ Compatible with Recharts, Chart.js, Google Sheets Charts API, and most charting 
 }
 ```
 
+### CSV Output (from CLI)
+
+```csv
+Priority,Count
+P1 - Critical,6
+P2 - High,4
+P3 - Medium,2
+```
+
+Ready for Google Sheets, Excel, or any spreadsheet. Use `--format csv --out results.csv`.
+
 ### TextData
 
 ```json
@@ -636,14 +814,22 @@ Compatible with Recharts, Chart.js, Google Sheets Charts API, and most charting 
 go test ./... -v
 ```
 
-The engine test suite covers all view types, all aggregation modes, filtering, grouping, currency normalization, growth, ratio, and full pipeline execution through both `SliceView` and `DomainAdapter`.
+The test suite includes:
+
+- **Engine tests** — all view types, aggregation modes, filtering, grouping, currency normalization, growth, ratio, and full pipeline execution through both `SliceView` and `DomainAdapter`
+- **Schema tests** — Auto-Detect classification, hierarchy detection, currency recognition, edge cases
+- **Smart Refine tests** — 21 tests covering payload building, response parsing, enrichment application, deep copy isolation (all mocked, no real AI calls)
+- **Validation tests** — Phase 6 cross-domain validation against Jira, e-commerce, and HR datasets, verifying correct dimension/measure classification, unit inference, temporal detection, and hierarchy discovery
 
 ## Roadmap
 
 - [x] Core engine with RecordView interface
 - [x] DomainAdapter for zero-copy typed access
-- [x] Schema auto-discovery
+- [x] Schema Auto-Detect (heuristic classification from CSV)
+- [x] Smart Refine (one-time AI enrichment via Gemini)
 - [x] AI translator (Gemini)
+- [x] CLI binary with CSV output (`--format csv --out results.csv`)
+- [x] Cross-domain validation (Jira, e-commerce, HR)
 - [ ] WASM build for browser/Node.js
 - [ ] npm package (`@spektr/engine`)
 - [ ] Python bindings
