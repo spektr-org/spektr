@@ -1,0 +1,36 @@
+{
+  "name": "@spektr/engine",
+  "version": "0.2.0",
+  "description": "Spektr — Domain-agnostic analytics engine. Picolytics for any dataset.",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "wasm_exec.js",
+    "spektr.wasm",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "cd .. && GOOS=js GOARCH=wasm go build -o ./npm/spektr.wasm ./cmd/wasm/",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "analytics",
+    "engine",
+    "wasm",
+    "charts",
+    "csv",
+    "data",
+    "picolytics",
+    "natural-language",
+    "ai"
+  ],
+  "author": "Spektr",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spektr-org/spektr"
+  },
+  "homepage": "https://github.com/spektr-org/spektr#readme"
+}
