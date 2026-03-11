@@ -1,3 +1,15 @@
-gitignore
-# bin files
+# Build artifacts
 bin/
+
+# npm generated files (built from source, not committed)
+npm/spektr.wasm
+npm/wasm_exec.js
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

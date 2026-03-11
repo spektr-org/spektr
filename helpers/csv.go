@@ -148,6 +148,10 @@ func ParseCSVAuto(data []byte) ([]engine.Record, []string, error) {
 			}
 		}
 
+		// Always inject record_count so engine has something to aggregate
+		// even when all columns are non-numeric (e.g. user/event exports)
+		rec.Measures["record_count"] = 1
+
 		records = append(records, rec)
 	}
 
@@ -178,5 +182,6 @@ func toSnakeCase(s string) string {
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "_")
 	s = strings.ReplaceAll(s, "-", "_")
+	s = strings.ReplaceAll(s, ".", "_")
 	return s
 }

@@ -74,7 +74,8 @@ echo ""
 # These are generic queries that work across any domain.
 # The AI translator adapts them to the actual schema.
 QUERIES=(
-    "show pie chart by severity"
+    "show users by status as a pie chart"
+	"convert all dates to MMM-YYYY format AND show distribution of monthly user to group association"
 )
 
 # ── Step 3: Run queries and build output ───────────────────────────────────
