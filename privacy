@@ -1,0 +1,3 @@
+Spektr does not collect, transmit, or store any user data. 
+All CSV data is processed locally in your browser using WebAssembly. 
+No network requests are made after the extension loads.
