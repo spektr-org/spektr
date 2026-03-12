@@ -177,11 +177,29 @@ func ParseCSVAutoView(data []byte) (engine.RecordView, []string, error) {
 	return engine.NewSliceView(records), keys, nil
 }
 
-// toSnakeCase converts "Column Name" → "column_name".
+// toSnakeCase converts "Column Name" or "camelCase" → "snake_case".
+// Must stay in sync with schema/discover.go toSnakeCase — both files produce
+// schema keys and they must agree on the output for every header string.
 func toSnakeCase(s string) string {
+	// Handle camelCase: insert underscore before each uppercase letter
+	// that follows a lowercase letter or digit (e.g. playbookId → playbook_Id)
+	var result strings.Builder
+	for i, r := range s {
+		if r >= 'A' && r <= 'Z' && i > 0 {
+			prev := rune(s[i-1])
+			if (prev >= 'a' && prev <= 'z') || (prev >= '0' && prev <= '9') {
+				result.WriteRune('_')
+			}
+		}
+		result.WriteRune(r)
+	}
+
+	s = result.String()
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "_")
 	s = strings.ReplaceAll(s, "-", "_")
 	s = strings.ReplaceAll(s, ".", "_")
+	s = strings.ReplaceAll(s, "__", "_")
+	s = strings.Trim(s, "_")
 	return s
 }

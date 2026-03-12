@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Spektr — Local Analytics Engine",
+  "version": "1.0.1",
+  "description": "Analyse any CSV instantly in your browser. No server. No data upload. Powered by Spektr WASM.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Spektr Analytics",
+    "default_icon": {
+      "16":  "icons/icon16.png",
+      "48":  "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16":  "icons/icon16.png",
+    "48":  "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "host_permissions": [
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://openrouter.ai/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["spektr.wasm"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

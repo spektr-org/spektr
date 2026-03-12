@@ -13,3 +13,9 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+#zip
+*.zip
+
+#csv
+*.csv

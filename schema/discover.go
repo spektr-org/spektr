@@ -291,13 +291,13 @@ func (col *columnAnalysis) classifyRole(totalRows int) {
 	switch col.colType {
 
 	case typeNumeric:
-		if col.uniqueCount == totalRows && totalRows > 10 {
-			// Every value unique → likely an ID
-			col.role = roleSkipped
-			col.skipReason = "Unique per row — likely an ID column"
-			col.recoverable = false
-			return
-		}
+		// NOTE: We deliberately do NOT skip numeric columns for being unique-per-row.
+		// High cardinality is expected and correct for continuous measures
+		// (e.g. totalDurationMS, avgLatency, responseTime). Skipping them was
+		// silently discarding the most analytically useful columns.
+		// Only a sequential row-index (0,1,2,... or 1,2,3,...) warrants skipping,
+		// and that is a rare enough edge-case that we let the consumer handle it.
+
 		// Check if values contain decimals (continuous data → always a measure)
 		if col.hasDecimals {
 			col.role = roleMeasure
@@ -328,10 +328,18 @@ func (col *columnAnalysis) classifyRole(totalRows int) {
 
 	case typeString:
 		if col.uniqueCount == totalRows && totalRows > 10 {
-			// Every value unique → likely an ID or free text
+			// If the column name signals a grouping identifier (playbookId, serviceId,
+			// userId, etc.) keep it as a dimension — these are the natural group-by keys
+			// in ops, security, and product data even when every value is unique.
+			if isIdentifierName(col.key) {
+				col.role = roleDimension
+				return
+			}
+			// Otherwise likely free-text or a true surrogate key — skip but mark
+			// recoverable so the consumer can force-include via RecoverColumns.
 			col.role = roleSkipped
-			col.skipReason = "Unique per row — likely an identifier"
-			col.recoverable = false
+			col.skipReason = "Unique per row — likely an identifier or free text"
+			col.recoverable = true
 			return
 		}
 		if col.uniqueCount > totalRows/2 && col.uniqueCount > 50 {
@@ -433,12 +441,22 @@ func isBool(s string) bool {
 // When a low-cardinality integer column has one of these in its name, it should
 // be classified as a measure rather than a coded dimension.
 var measureKeywords = []string{
+	// Finance / general
 	"point", "hour", "cost", "price", "amount", "total",
 	"revenue", "salary", "wage", "budget", "spend", "spent",
 	"estimate", "actual", "score", "rating", "weight",
 	"quantity", "qty", "count", "size", "duration",
 	"distance", "age", "fee", "tax", "profit", "loss",
 	"margin", "balance", "payment", "charge", "value",
+	// Ops / security / infra
+	"run", "runs", "fail", "failed", "failure", "success", "successful",
+	"error", "errors", "attempt", "attempts", "retry", "retries",
+	"rate", "ratio", "perc", "percent", "percentage",
+	"latency", "ms", "sec", "minute", "bytes", "kb", "mb", "gb",
+	"request", "requests", "response", "packet", "packets",
+	"event", "events", "alert", "alerts", "incident", "incidents",
+	"ticket", "tickets", "issue", "issues", "hit", "hits",
+	"throughput", "bandwidth", "capacity", "utilization", "usage",
 }
 
 // isMeasureNameHint checks if the column key contains a known measure keyword.
@@ -449,6 +467,47 @@ func isMeasureNameHint(key string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+// isIdentifierName returns true when a column name suggests it is a grouping
+// identifier rather than free text — even if every row has a unique value.
+// Examples: playbookId, service_id, userId, playbook_name, alert_code.
+// These are intentionally kept as dimensions so users can group-by them.
+func isIdentifierName(key string) bool {
+	lower := strings.ToLower(key)
+
+	// Suffixes that signal a categorical / grouping identifier
+	identifierSuffixes := []string{
+		"id", "ids", "name", "names", "key", "keys",
+		"code", "codes", "type", "types", "label", "labels",
+		"ref", "uid", "uuid", "slug", "tag", "tags",
+		"category", "group", "class", "kind",
+	}
+	for _, suffix := range identifierSuffixes {
+		if lower == suffix {
+			return true
+		}
+		if strings.HasSuffix(lower, "_"+suffix) {
+			return true
+		}
+		// Also catch camelCase-originated keys like "playbookid" → "playbook_id"
+		if strings.HasSuffix(lower, suffix) && len(lower) > len(suffix) {
+			prev := lower[len(lower)-len(suffix)-1]
+			if prev == '_' {
+				return true
+			}
+		}
+	}
+
+	// Prefixes that signal an identifier column
+	identifierPrefixes := []string{"id_", "uid_", "uuid_", "ref_"}
+	for _, prefix := range identifierPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+
 	return false
 }
 

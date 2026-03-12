@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spektr — Local Analytics Engine</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #f5f5f7;
+    --surface:   #ffffff;
+    --card:      #ffffff;
+    --border:    #e2e2ea;
+    --border2:   #d0d0dc;
+    --accent:    #6c5ce7;
+    --accent-h:  #5a4bd1;
+    --accent2:   #e84393;
+    --accent3:   #00b894;
+    --accent4:   #e67e22;
+    --text:      #1a1a2e;
+    --text2:     #44445a;
+    --muted:     #8888a0;
+    --mono:      'JetBrains Mono', monospace;
+    --sans:      'Syne', sans-serif;
+    --shadow:    0 1px 3px rgba(0,0,0,0.07), 0 4px 14px rgba(0,0,0,0.05);
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Subtle dot grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: radial-gradient(circle, #c8c8d8 1px, transparent 1px);
+    background-size: 28px 28px;
+    opacity: 0.45;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrap {
+    position: relative;
+    z-index: 1;
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 44px 24px 80px;
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    margin-bottom: 40px;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding-bottom: 24px;
+    border-bottom: 1.5px solid var(--border);
+  }
+
+  .logo { display: flex; align-items: center; gap: 14px; }
+
+  .logo-mark {
+    width: 44px; height: 44px;
+    background: var(--accent);
+    clip-path: polygon(50% 0%,100% 25%,100% 75%,50% 100%,0% 75%,0% 25%);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-weight: 700; font-size: 16px; color: white;
+    flex-shrink: 0;
+    box-shadow: 0 4px 14px rgba(108,92,231,0.35);
+  }
+
+  h1 { font-size: 30px; font-weight: 800; letter-spacing: -0.6px; color: var(--text); }
+
+  .tagline {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted); letter-spacing: 0.06em; margin-top: 3px;
+  }
+
+  .status-pill {
+    font-family: var(--mono); font-size: 11px;
+    padding: 7px 16px; border-radius: 20px;
+    border: 1px solid var(--border2); background: var(--surface);
+    color: var(--muted); display: flex; align-items: center; gap: 7px;
+    white-space: nowrap; box-shadow: var(--shadow-sm);
+  }
+
+  .status-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--muted); transition: background 0.3s;
+  }
+
+  .status-pill.ready   .status-dot { background: var(--accent3); box-shadow: 0 0 7px var(--accent3); }
+  .status-pill.loading .status-dot { background: var(--accent4); animation: pulse 1s infinite; }
+  .status-pill.error   .status-dot { background: var(--accent2); }
+  .status-pill.ready { border-color: rgba(0,184,148,0.3); color: var(--text2); }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+  /* ── Panels ── */
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+  }
+
+  .panel-title {
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+
+  .panel-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* ── Upload zone ── */
+  .upload-zone {
+    border: 2px dashed var(--border2);
+    border-radius: 10px; padding: 36px;
+    text-align: center; cursor: pointer;
+    transition: all 0.2s; position: relative; background: var(--bg);
+  }
+
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent); background: rgba(108,92,231,0.04);
+  }
+
+  .upload-zone input[type=file] {
+    position: absolute; inset: 0; opacity: 0;
+    cursor: pointer; width: 100%; height: 100%;
+  }
+
+  .upload-icon { font-size: 30px; margin-bottom: 10px; display: block; }
+  .upload-label { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .upload-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+
+  .file-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(108,92,231,0.08); border: 1px solid rgba(108,92,231,0.2);
+    border-radius: 7px; padding: 8px 16px;
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    font-weight: 600; margin-top: 14px;
+  }
+
+  /* ── Schema ── */
+  .schema-stats {
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    margin-bottom: 14px; display: flex; gap: 24px; flex-wrap: wrap;
+    padding: 12px 14px; background: var(--bg);
+    border-radius: 8px; border: 1px solid var(--border);
+  }
+
+  .schema-stats span { color: var(--accent); font-weight: 700; }
+
+  .schema-grid { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 6px; }
+
+  .schema-pill {
+    font-family: var(--mono); font-size: 11px;
+    padding: 4px 11px; border-radius: 5px; border: 1px solid; font-weight: 500;
+  }
+
+  .schema-pill.dim  { background: rgba(108,92,231,0.07); border-color: rgba(108,92,231,0.2);  color: var(--accent); }
+  .schema-pill.meas { background: rgba(0,184,148,0.07);  border-color: rgba(0,184,148,0.25);  color: var(--accent3); }
+
+  .schema-sub-label {
+    font-family: var(--mono); font-size: 9px; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  }
+
+  /* ── Config / mode ── */
+  .config-row {
+    display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap;
+  }
+
+  .mode-col { display: flex; flex-direction: column; gap: 6px; }
+
+  .mode-col-label {
+    font-family: var(--mono); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+  }
+
+  .mode-toggle { display: flex; gap: 6px; }
+
+  .mode-btn {
+    padding: 9px 16px; border-radius: 7px;
+    border: 1.5px solid var(--border2); background: var(--bg);
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--muted); cursor: pointer; transition: all 0.15s; white-space: nowrap;
+  }
+
+  .mode-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  .mode-btn.active {
+    border-color: var(--accent); background: rgba(108,92,231,0.1); color: var(--accent);
+  }
+
+  .ai-fields {
+    display: none; gap: 12px; flex-wrap: wrap;
+    align-items: flex-end; flex: 1; min-width: 280px;
+  }
+
+  .ai-fields.visible { display: flex; }
+
+  .field-group { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 180px; }
+
+  .field-label {
+    font-family: var(--mono); font-size: 9px; font-weight: 700;
+    letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted);
+  }
+
+  .field-group input {
+    background: var(--bg); border: 1.5px solid var(--border2);
+    border-radius: 7px; padding: 10px 14px;
+    font-family: var(--mono); font-size: 12px; color: var(--text);
+    outline: none; transition: border-color 0.2s; width: 100%;
+  }
+
+  .field-group input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108,92,231,0.1); }
+  .field-group input::placeholder { color: var(--muted); }
+
+  .mode-hint {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    margin-top: 12px; line-height: 1.7;
+    padding: 10px 14px; background: var(--bg);
+    border-radius: 7px; border: 1px solid var(--border);
+  }
+
+  /* ── Query bar ── */
+  .query-bar { display: flex; gap: 10px; align-items: stretch; }
+
+  .query-input {
+    flex: 1; background: var(--bg);
+    border: 1.5px solid var(--border2); border-radius: 9px;
+    padding: 14px 18px; font-family: var(--mono); font-size: 13px; color: var(--text);
+    outline: none; transition: border-color 0.2s;
+  }
+
+  .query-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108,92,231,0.1); }
+  .query-input::placeholder { color: var(--muted); }
+  .query-input:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .run-btn {
+    padding: 14px 28px; background: var(--accent); border: none; border-radius: 9px;
+    font-family: var(--mono); font-size: 13px; font-weight: 700; color: white;
+    cursor: pointer; transition: all 0.15s;
+    display: flex; align-items: center; gap: 8px; white-space: nowrap;
+    box-shadow: 0 3px 10px rgba(108,92,231,0.35);
+  }
+
+  .run-btn:hover   { background: var(--accent-h); transform: translateY(-1px); box-shadow: 0 5px 16px rgba(108,92,231,0.4); }
+  .run-btn:active  { transform: translateY(0); }
+  .run-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+
+  /* ── Suggestions ── */
+  .suggestions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+
+  .sug-chip {
+    font-family: var(--mono); font-size: 11px; padding: 5px 13px;
+    border: 1px solid var(--border2); border-radius: 20px;
+    color: var(--muted); cursor: pointer; transition: all 0.15s;
+    background: var(--surface); box-shadow: var(--shadow-sm);
+  }
+
+  .sug-chip:hover { border-color: var(--accent); color: var(--accent); background: rgba(108,92,231,0.06); }
+
+  /* ── Results ── */
+  #results { margin-top: 8px; }
+
+  .result-card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 14px; margin-bottom: 20px; overflow: hidden;
+    animation: slideIn 0.3s ease; box-shadow: var(--shadow);
+  }
+
+  @keyframes slideIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+
+  .result-header {
+    padding: 14px 20px; background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+
+  .result-query { font-family: var(--mono); font-size: 12px; color: var(--accent); font-weight: 600; }
+
+  .result-meta { display: flex; align-items: center; gap: 10px; }
+
+  .result-type-badge {
+    font-family: var(--mono); font-size: 9px; padding: 3px 9px; border-radius: 4px;
+    font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+  }
+
+  .badge-bar   { background: rgba(108,92,231,0.1); color: var(--accent);  border: 1px solid rgba(108,92,231,0.2); }
+  .badge-pie   { background: rgba(232,67,147,0.1); color: var(--accent2); border: 1px solid rgba(232,67,147,0.2); }
+  .badge-line  { background: rgba(0,184,148,0.1);  color: var(--accent3); border: 1px solid rgba(0,184,148,0.2); }
+  .badge-table { background: rgba(230,126,34,0.1); color: var(--accent4); border: 1px solid rgba(230,126,34,0.2); }
+
+  .result-dismiss {
+    background: transparent; border: none; color: var(--muted);
+    cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1;
+    transition: color 0.15s; border-radius: 3px;
+  }
+  .result-dismiss:hover { color: var(--accent2); background: rgba(232,67,147,0.08); }
+
+  .result-body {
+    padding: 20px; display: grid; grid-template-columns: 1fr 1fr;
+    gap: 20px; align-items: start;
+  }
+
+  @media (max-width: 640px) { .result-body { grid-template-columns: 1fr; } }
+
+  .result-reply {
+    font-size: 12px; color: var(--text2); font-family: var(--mono); line-height: 1.7;
+    grid-column: 1 / -1; padding: 10px 14px;
+    background: rgba(108,92,231,0.04); border-radius: 7px; border-left: 3px solid var(--accent);
+  }
+
+  .chart-wrap { position: relative; height: 250px; }
+
+  .table-wrap { overflow-x: auto; border-radius: 7px; border: 1px solid var(--border); }
+
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+
+  th {
+    text-align: left; padding: 8px 12px; background: var(--bg); color: var(--muted);
+    font-size: 9px; letter-spacing: 0.09em; text-transform: uppercase;
+    border-bottom: 1px solid var(--border2); white-space: nowrap; font-weight: 700;
+  }
+
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text2); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(108,92,231,0.03); }
+  td.num { text-align: right; color: var(--accent); font-weight: 700; }
+
+  .tfoot-row td {
+    background: var(--bg); color: var(--text2); font-weight: 700;
+    border-top: 1.5px solid var(--border2);
+  }
+
+  /* ── Error / empty ── */
+  .error-card {
+    background: rgba(232,67,147,0.06); border: 1px solid rgba(232,67,147,0.2);
+    border-radius: 9px; padding: 14px 18px;
+    font-family: var(--mono); font-size: 12px; color: var(--accent2);
+    margin-bottom: 16px; animation: slideIn 0.2s ease; font-weight: 500;
+  }
+
+  .empty-state {
+    text-align: center; padding: 64px 20px;
+    color: var(--muted); font-family: var(--mono); font-size: 12px; line-height: 2.2;
+  }
+
+  .empty-state .big { font-size: 38px; display: block; margin-bottom: 12px; opacity: 0.18; }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: 60px; text-align: center;
+    font-family: var(--mono); font-size: 11px; color: var(--muted); line-height: 2.2;
+    position: relative; z-index: 1;
+    padding-top: 24px; border-top: 1px solid var(--border);
+  }
+
+  footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
+  footer a:hover { text-decoration: underline; }
+
+  /* ── Spinner ── */
+  .spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.25); border-top-color: white;
+    border-radius: 50%; animation: spin 0.6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">
+      <div class="logo-mark">⚡</div>
+      <div>
+        <h1>Spektr</h1>
+        <div class="tagline">LOCAL ANALYTICS ENGINE · NO SERVER · DATA STAYS HERE</div>
+      </div>
+    </div>
+    <div class="status-pill loading" id="statusPill">
+      <div class="status-dot"></div>
+      <span id="statusText">Loading WASM…</span>
+    </div>
+  </header>
+
+  <!-- 01: Upload -->
+  <div class="panel" id="uploadPanel">
+    <div class="panel-title">01 · Data Source</div>
+    <div class="upload-zone" id="dropZone">
+      <input type="file" id="csvFile" accept=".csv,text/csv">
+      <span class="upload-icon">📂</span>
+      <div class="upload-label">Drop your CSV here or click to browse</div>
+      <div class="upload-sub">Any CSV — user exports, analytics data, logs, financial records</div>
+      <div id="fileBadge"></div>
+    </div>
+  </div>
+
+  <!-- 02: Schema -->
+  <div class="panel" id="schemaPanel" style="display:none">
+    <div class="panel-title">02 · Discovered Schema</div>
+    <div class="schema-stats" id="schemaStats"></div>
+    <div style="margin-bottom:12px">
+      <div class="schema-sub-label">Dimensions</div>
+      <div class="schema-grid" id="dimPills"></div>
+    </div>
+    <div>
+      <div class="schema-sub-label">Measures</div>
+      <div class="schema-grid" id="measPills"></div>
+    </div>
+  </div>
+
+  <!-- 03: Query Mode -->
+  <div class="panel" id="configPanel" style="display:none">
+    <div class="panel-title">03 · Query Mode</div>
+    <div class="config-row">
+      <div class="mode-col">
+        <span class="mode-col-label">Translation</span>
+        <div class="mode-toggle">
+          <button class="mode-btn active" id="btnLocal" onclick="setMode('local')">Local</button>
+          <button class="mode-btn" id="btnAI" onclick="setMode('ai')">AI / NL</button>
+        </div>
+      </div>
+      <div class="ai-fields" id="aiFields">
+        <div class="field-group">
+          <span class="field-label">API Key</span>
+          <input type="password" id="aiApiKey"
+                 placeholder="Your key (stays in browser, never sent to Spektr)">
+        </div>
+        <div class="field-group" style="max-width:200px">
+          <span class="field-label">Model (optional)</span>
+          <input type="text" id="aiModel" placeholder="e.g. gemini-1.5-flash">
+        </div>
+      </div>
+    </div>
+    <div class="mode-hint" id="modeHint">
+      <span style="color:var(--accent4);font-weight:600">Local mode:</span>
+      parses "count X by Y" / "breakdown by Z" entirely on-device. Zero API calls.
+    </div>
+  </div>
+
+  <!-- 04: Query -->
+  <div class="panel" id="queryPanel" style="display:none">
+    <div class="panel-title">04 · Run Queries</div>
+    <div class="query-bar">
+      <input class="query-input" id="queryInput"
+             placeholder="e.g. count users by group  ·  breakdown by state  ·  show signup trend"
+             disabled
+             onkeydown="if(event.key==='Enter')runQuery()">
+      <button class="run-btn" id="runBtn" onclick="runQuery()" disabled>
+        <span id="runBtnText">Run</span>
+        <span>▶</span>
+      </button>
+    </div>
+    <div class="suggestions" id="suggestions"></div>
+  </div>
+
+  <!-- Results -->
+  <div id="results"></div>
+
+  <div class="empty-state" id="emptyState">
+    <span class="big">⚡</span>
+    Upload a CSV and type a query to get started.<br>
+    All computation runs locally in your browser — no data leaves this page.
+  </div>
+
+</div><!-- /wrap -->
+
+<footer>
+  <strong>Spektr</strong> · Open-source analytics engine ·
+  <a href="https://github.com/spektr-org/spektr" target="_blank">github.com/spektr-org/spektr</a><br>
+  Zero network calls after page load · Your data never leaves this tab
+</footer>
+
+<script src="wasm_exec.js"></script>
+<script>
+// ── State ─────────────────────────────────────────────────
+let wasmReady = false;
+let records   = [];
+let schema    = null;
+let queryMode = 'local'; // 'local' | 'ai'
+let chartReg  = {};
+
+// ── WASM Init ─────────────────────────────────────────────
+async function initWasm() {
+  setStatus('loading', 'Loading WASM…');
+  try {
+    const go = new Go();
+    const result = await WebAssembly.instantiateStreaming(
+      fetch('spektr.wasm'), go.importObject
+    );
+    go.run(result.instance);
+    await waitForSpektr();
+    wasmReady = true;
+    setStatus('ready', 'Engine ready');
+  } catch (e) {
+    setStatus('error', 'WASM failed: ' + e.message);
+    console.error(e);
+  }
+}
+
+function waitForSpektr(timeout = 10000) {
+  return new Promise((res, rej) => {
+    if (globalThis.__spektr) return res();
+    const deadline = Date.now() + timeout;
+    const t = setInterval(() => {
+      if (globalThis.__spektr) { clearInterval(t); res(); }
+      else if (Date.now() > deadline) { clearInterval(t); rej(new Error('Spektr WASM timeout')); }
+    }, 50);
+  });
+}
+
+// ── Status ────────────────────────────────────────────────
+function setStatus(state, text) {
+  const pill = document.getElementById('statusPill');
+  pill.className = 'status-pill ' + state;
+  document.getElementById('statusText').textContent = text;
+}
+
+// ── Spektr API ────────────────────────────────────────────
+const S = {
+  discover(csv)             { return globalThis.__spektr.discover(csv); },
+  parseCSV(csv, sch)        { return globalThis.__spektr.parseCSV(csv, JSON.stringify(sch)); },
+  execute(spec, recs, opts) {
+    return globalThis.__spektr.execute(
+      JSON.stringify(spec), JSON.stringify(recs),
+      opts ? JSON.stringify(opts) : undefined
+    );
+  },
+  translate(q, sch, summary, key, model) {
+    return globalThis.__spektr.translate(
+      q, JSON.stringify(sch), JSON.stringify(summary), key, model || undefined
+    );
+  },
+};
+
+// ── File upload ───────────────────────────────────────────
+document.getElementById('csvFile').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) loadCSV(file);
+});
+
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) loadCSV(file);
+});
+
+async function loadCSV(file) {
+  if (!wasmReady) { showError('Engine not ready yet.'); return; }
+  const text = await file.text();
+
+  const discResult = S.discover(text);
+  if (!discResult.ok) { showError('Schema discovery failed: ' + discResult.error); return; }
+  schema = discResult.data;
+
+  const parseResult = S.parseCSV(text, schema);
+  if (!parseResult.ok) { showError('CSV parse failed: ' + parseResult.error); return; }
+  records = parseResult.data;
+
+  document.getElementById('fileBadge').innerHTML =
+    `<div class="file-badge">📄 ${escHtml(file.name)} · ${records.length} rows</div>`;
+
+  renderSchema(schema, records.length);
+  buildSuggestions(schema);
+
+  document.getElementById('schemaPanel').style.display = 'block';
+  document.getElementById('configPanel').style.display = 'block';
+  document.getElementById('queryPanel').style.display  = 'block';
+  document.getElementById('emptyState').style.display  = 'none';
+  document.getElementById('queryInput').disabled  = false;
+  document.getElementById('runBtn').disabled      = false;
+  document.getElementById('queryInput').focus();
+}
+
+// ── Schema display ────────────────────────────────────────
+function renderSchema(sch, rowCount) {
+  document.getElementById('schemaStats').innerHTML =
+    `<div>${rowCount} <span>records</span></div>
+     <div>${sch.dimensions.length} <span>dimensions</span></div>
+     <div>${sch.measures.length} <span>measures</span></div>
+     <div>${sch.name || 'auto-discovered'} <span>schema</span></div>`;
+
+  document.getElementById('dimPills').innerHTML = sch.dimensions.map(d =>
+    `<span class="schema-pill dim" title="${escHtml(d.description||d.key)}">${escHtml(d.key)}</span>`
+  ).join('');
+
+  document.getElementById('measPills').innerHTML = sch.measures.map(m =>
+    `<span class="schema-pill meas" title="${escHtml(m.description||m.key)}">${escHtml(m.key)}</span>`
+  ).join('');
+}
+
+// ── Suggestions ───────────────────────────────────────────
+function buildSuggestions(sch) {
+  const dims = sch.dimensions.map(d => d.key);
+  const sugs = [];
+  if (dims[0]) sugs.push(`count records by ${dims[0]}`);
+  if (dims[1]) sugs.push(`count records by ${dims[1]}`);
+  if (dims[0] && dims[1]) sugs.push(`breakdown ${dims[0]} by ${dims[1]}`);
+  if (dims[0]) sugs.push(`show distribution of ${dims[0]}`);
+  if (dims[0]) sugs.push(`pie chart by ${dims[0]}`);
+
+  document.getElementById('suggestions').innerHTML = sugs.map(s =>
+    `<button class="sug-chip" onclick="setQuery('${escHtml(s)}')">${escHtml(s)}</button>`
+  ).join('');
+}
+
+function setQuery(q) {
+  document.getElementById('queryInput').value = q;
+  document.getElementById('queryInput').focus();
+}
+
+// ── Mode toggle ───────────────────────────────────────────
+function setMode(mode) {
+  queryMode = mode;
+  document.getElementById('btnLocal').classList.toggle('active', mode === 'local');
+  document.getElementById('btnAI').classList.toggle('active',    mode === 'ai');
+  document.getElementById('aiFields').classList.toggle('visible', mode === 'ai');
+  document.getElementById('modeHint').innerHTML = mode === 'local'
+    ? `<span style="color:var(--accent4);font-weight:600">Local mode:</span>
+       parses "count X by Y" / "breakdown by Z" entirely on-device. Zero API calls.`
+    : `<span style="color:var(--accent4);font-weight:600">AI / NL mode:</span>
+       translates natural language to queries via your AI provider.
+       Your key is used only in this browser tab — never transmitted to Spektr.`;
+}
+
+// ── Query runner ──────────────────────────────────────────
+async function runQuery() {
+  const q = document.getElementById('queryInput').value.trim();
+  if (!q || !wasmReady || !records.length) return;
+
+  const btn = document.getElementById('runBtn');
+  const txt = document.getElementById('runBtnText');
+  btn.disabled = true;
+  txt.innerHTML = '<span class="spinner"></span>';
+  clearErrors();
+
+  try {
+    let spec;
+
+    if (queryMode === 'ai') {
+      const key   = document.getElementById('aiApiKey').value.trim();
+      const model = document.getElementById('aiModel').value.trim() || undefined;
+      if (!key) { showError('Enter an API key to use AI / NL mode.'); return; }
+      const summary = buildSummary();
+      const tr = S.translate(q, schema, summary, key, model);
+      if (!tr.ok) { showError('AI translation failed: ' + tr.error); return; }
+      spec = tr.data.querySpec;
+    } else {
+      spec = localTranslate(q, schema);
+      if (!spec) {
+        showError(`Couldn't parse: "${q}". Try: "count records by [field]" or "breakdown [dim] by [dim]"`);
+        return;
+      }
+    }
+
+    const result = S.execute(spec, records);
+    if (!result.ok) { showError('Execute failed: ' + result.error); return; }
+
+    renderResult(q, spec, result.data);
+    document.getElementById('queryInput').value = '';
+  } finally {
+    btn.disabled = false;
+    txt.textContent = 'Run';
+  }
+}
+
+// ── Local translator ──────────────────────────────────────
+function localTranslate(q, sch) {
+  const lower = q.toLowerCase().trim();
+  const dims  = sch.dimensions.map(d => d.key);
+  const meas  = sch.measures.map(m => m.key);
+
+  function findDim(text) {
+    return dims.find(d => text.includes(d.replace(/_/g,' ')) || text.includes(d)) || null;
+  }
+
+  let visualize = 'bar';
+  if (/pie|share|proportion|split|doughnut/i.test(lower))  visualize = 'pie';
+  if (/trend|over time|timeline|growth|line/i.test(lower)) visualize = 'line';
+  if (/table|list|show all|detail/i.test(lower))           visualize = 'table';
+
+  let aggregation = 'count';
+  let measure     = 'record_count';
+  if (/sum|total/i.test(lower))        aggregation = 'sum';
+  if (/avg|average|mean/i.test(lower)) aggregation = 'avg';
+
+  const explicitMeas = meas.find(m => lower.includes(m.replace(/_/g,' ')) || lower.includes(m));
+  if (explicitMeas && explicitMeas !== 'record_count') measure = explicitMeas;
+
+  const byMatch = lower.match(/\bby\s+(.+?)(?:\s+and\s+|\s*$)/i);
+  if (byMatch) {
+    const g = findDim(byMatch[1]);
+    if (g) return makeSpec({ groupBy: [g], aggregation, measure, visualize, title: q });
+  }
+
+  const ofMatch = lower.match(/(?:distribution of|show|count)\s+(.+)/i);
+  if (ofMatch) {
+    const g = findDim(ofMatch[1]) || dims[0];
+    if (g) return makeSpec({ groupBy: [g], aggregation, measure, visualize, title: q });
+  }
+
+  if (dims.length) return makeSpec({ groupBy: [dims[0]], aggregation, measure, visualize, title: q });
+  return null;
+}
+
+function makeSpec({ groupBy, aggregation, measure, visualize, title }) {
+  return {
+    intent: 'chart',
+    filters: { dimensions: {} },
+    aggregation, measure, groupBy,
+    sortBy: 'value_desc', limit: 20, visualize,
+    title: title || groupBy.join(' + '),
+    reply: `${aggregation} of ${measure} grouped by ${groupBy.join(', ')}.`,
+    confidence: 0.85,
+  };
+}
+
+function buildSummary() {
+  const dims = {};
+  schema.dimensions.forEach(d => {
+    dims[d.key] = [...new Set(records.map(r => r.dimensions[d.key]).filter(Boolean))].slice(0, 8);
+  });
+  return { recordCount: records.length, dimensions: dims };
+}
+
+// ── Render result ─────────────────────────────────────────
+function renderResult(query, spec, result) {
+  const id       = 'r_' + Date.now();
+  const canvasId = 'c_' + id;
+  const container = document.getElementById('results');
+
+  const type    = (result.chartConfig && result.chartConfig.chartType) || 'table';
+  const badge   = { bar:'badge-bar', pie:'badge-pie', line:'badge-line', table:'badge-table' }[type] || 'badge-bar';
+  const hasChart = result.chartConfig && (result.chartConfig.series||[]).length > 0;
+  const hasTable = result.tableData && (result.tableData.rows||[]).length > 0;
+  const gridStyle = (hasChart && hasTable) ? '' : 'grid-template-columns:1fr;';
+
+  const card = document.createElement('div');
+  card.className = 'result-card';
+  card.id = id;
+  card.innerHTML = `
+    <div class="result-header">
+      <span class="result-query">▷ ${escHtml(query)}</span>
+      <div class="result-meta">
+        <span class="result-type-badge ${badge}">${type}</span>
+        <button class="result-dismiss" onclick="dismissResult('${id}')" title="Remove">✕</button>
+      </div>
+    </div>
+    <div class="result-body" style="${gridStyle}">
+      ${result.reply ? `<div class="result-reply" style="grid-column:1/-1">${escHtml(result.reply)}</div>` : ''}
+      ${hasChart ? `<div class="chart-wrap"><canvas id="${canvasId}"></canvas></div>` : ''}
+      ${hasTable ? buildTableHtml(result.tableData) : ''}
+    </div>`;
+
+  container.insertBefore(card, container.firstChild);
+  if (hasChart) setTimeout(() => drawChart(canvasId, result.chartConfig), 0);
+}
+
+function buildTableHtml(td) {
+  const cols = td.columns || [];
+  const rows = td.rows    || [];
+  const thead = cols.map(c => `<th>${escHtml(c.label || c.key)}</th>`).join('');
+  const tbody = rows.map(row =>
+    `<tr>${row.map((cell, i) => {
+      const align = cols[i]?.align === 'right' ? ' class="num"' : '';
+      return `<td${align}>${escHtml(String(cell ?? ''))}</td>`;
+    }).join('')}</tr>`
+  ).join('');
+  let foot = '';
+  if (td.summary) {
+    const vals = Object.values(td.summary.values || {});
+    foot = `<tfoot><tr class="tfoot-row">
+      <td>${escHtml(td.summary.label || 'Total')}</td>
+      ${vals.slice(1).map(v => `<td class="num">${escHtml(String(v))}</td>`).join('')}
+    </tr></tfoot>`;
+  }
+  return `<div class="table-wrap"><table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody>${foot}</table></div>`;
+}
+
+// ── Chart.js ──────────────────────────────────────────────
+const PALETTE = ['#6c5ce7','#e84393','#00b894','#e67e22','#0984e3','#a29bfe','#fd79a8','#55efc4'];
+
+function drawChart(canvasId, cfg) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  if (chartReg[canvasId]) chartReg[canvasId].destroy();
+
+  const series = cfg.series || [];
+  const labels = (series[0]?.data || []).map(p => p.label);
+  let config;
+
+  if (cfg.chartType === 'pie') {
+    config = {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{ data: (series[0]?.data||[]).map(p => p.value),
+          backgroundColor: PALETTE, borderWidth: 2, borderColor: '#ffffff' }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position:'right', labels:{ color:'#44445a', font:{family:'JetBrains Mono',size:11}, boxWidth:12, padding:12 } },
+          title:  { display:!!cfg.title, text:cfg.title, color:'#1a1a2e', font:{family:'Syne',size:13,weight:'700'} }
+        }
+      }
+    };
+  } else if (cfg.chartType === 'line') {
+    config = {
+      type: 'line',
+      data: {
+        labels,
+        datasets: series.map((s, i) => ({
+          label: s.name,
+          data: s.data.map(p => p.value),
+          borderColor: PALETTE[i % PALETTE.length],
+          backgroundColor: PALETTE[i % PALETTE.length] + '18',
+          borderWidth: 2, pointRadius: 4, tension: 0.35, fill: i === 0,
+        }))
+      },
+      options: scaleOptions(cfg)
+    };
+  } else {
+    config = {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: series.map((s, i) => ({
+          label: s.name,
+          data: s.data.map(p => p.value),
+          backgroundColor: PALETTE[i % PALETTE.length] + 'cc',
+          borderColor: PALETTE[i % PALETTE.length],
+          borderWidth: 1, borderRadius: 5,
+        }))
+      },
+      options: scaleOptions(cfg)
+    };
+  }
+
+  chartReg[canvasId] = new Chart(canvas, config);
+}
+
+function scaleOptions(cfg) {
+  return {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { display: (cfg.series||[]).length > 1, labels:{ color:'#44445a', font:{family:'JetBrains Mono',size:11} } },
+      title:  { display:!!cfg.title, text:cfg.title, color:'#1a1a2e', font:{family:'Syne',size:13,weight:'700'} }
+    },
+    scales: {
+      x: { ticks:{ color:'#8888a0', font:{family:'JetBrains Mono',size:10}, maxRotation:35 }, grid:{ color:'#e2e2ea' } },
+      y: { ticks:{ color:'#8888a0', font:{family:'JetBrains Mono',size:10} },                 grid:{ color:'#e2e2ea' } }
+    }
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────────
+function dismissResult(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  if (!document.getElementById('results').children.length) {
+    document.getElementById('emptyState').style.display = 'block';
+  }
+}
+
+function showError(msg) {
+  const div = document.createElement('div');
+  div.className = 'error-card';
+  div.textContent = '⚠ ' + msg;
+  document.getElementById('results').insertBefore(div, document.getElementById('results').firstChild);
+  setTimeout(() => div.remove(), 6000);
+}
+
+function clearErrors() { document.querySelectorAll('.error-card').forEach(e => e.remove()); }
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Boot ──────────────────────────────────────────────────
+initWasm();
+</script>
+</body>
+</html>
