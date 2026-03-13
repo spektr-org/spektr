@@ -84,7 +84,7 @@ func ParseCSV(data []byte, sch schema.Config) ([]engine.Record, error) {
 			if m.isDimension {
 				rec.Dimensions[m.schemaKey] = val
 			} else if m.isMeasure {
-				if f, err := strconv.ParseFloat(val, 64); err == nil {
+				if f, ok := cleanAndParseNumeric(val); ok {
 					rec.Measures[m.schemaKey] = f
 				}
 			}
@@ -140,8 +140,8 @@ func ParseCSVAuto(data []byte) ([]engine.Record, []string, error) {
 			}
 			val = strings.TrimSpace(val)
 
-			// Try numeric first
-			if f, err := strconv.ParseFloat(val, 64); err == nil {
+			// Try numeric first (handles %, commas, duration suffixes)
+			if f, ok := cleanAndParseNumeric(val); ok {
 				rec.Measures[keys[i]] = f
 			} else {
 				rec.Dimensions[keys[i]] = val
@@ -175,6 +175,70 @@ func ParseCSVAutoView(data []byte) (engine.RecordView, []string, error) {
 		return nil, nil, err
 	}
 	return engine.NewSliceView(records), keys, nil
+}
+
+// cleanAndParseNumeric attempts to extract a numeric value from a string that
+// may contain common formatting: percentages ("72.2%"), comma separators
+// ("1,234.56"), and duration suffixes ("2.37 s", "794 ms", "4.54 mins").
+//
+// Duration normalization converts to milliseconds:
+//   "794 ms"    → 794
+//   "2.37 s"    → 2370
+//   "4.54 mins" → 272400
+//   "1.2 hrs"   → 4320000
+//
+// Returns the parsed value and true, or 0 and false if unparseable.
+func cleanAndParseNumeric(val string) (float64, bool) {
+	val = strings.TrimSpace(val)
+	if val == "" {
+		return 0, false
+	}
+
+	// Fast path: try raw parse first (covers clean numbers)
+	if f, err := strconv.ParseFloat(val, 64); err == nil {
+		return f, true
+	}
+
+	// Strip commas (thousands separators): "1,234.56" → "1234.56"
+	cleaned := strings.ReplaceAll(val, ",", "")
+	if f, err := strconv.ParseFloat(cleaned, 64); err == nil {
+		return f, true
+	}
+
+	// Percentage: "72.2%" → 72.2
+	if strings.HasSuffix(cleaned, "%") {
+		numStr := strings.TrimSuffix(cleaned, "%")
+		numStr = strings.TrimSpace(numStr)
+		if f, err := strconv.ParseFloat(numStr, 64); err == nil {
+			return f, true
+		}
+	}
+
+	// Duration suffixes — normalize to milliseconds
+	// Order matters: check longer suffixes first to avoid "mins" matching "ms" partial
+	lower := strings.ToLower(cleaned)
+	durationSuffixes := []struct {
+		suffix     string
+		multiplier float64
+	}{
+		{"mins", 60000},
+		{"min", 60000},
+		{"hrs", 3600000},
+		{"hr", 3600000},
+		{"ms", 1},
+		{"s", 1000},
+	}
+
+	for _, ds := range durationSuffixes {
+		if strings.HasSuffix(lower, ds.suffix) {
+			numStr := strings.TrimSpace(cleaned[:len(cleaned)-len(ds.suffix)])
+			if f, err := strconv.ParseFloat(numStr, 64); err == nil {
+				return f * ds.multiplier, true
+			}
+		}
+	}
+
+	return 0, false
 }
 
 // toSnakeCase converts "Column Name" or "camelCase" → "snake_case".
