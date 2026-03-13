@@ -696,8 +696,7 @@ spektr/
 ├── Docs/                    # Documentation
 │   ├── Spektr_API_Reference.docx
 │   ├── spektr-architecture-design-v3.md
-│   ├── swagger.yaml             # OpenAPI 3.0 spec (7 endpoints, 29 schemas)
-│   └── swagger-ui.html          # Self-contained Swagger UI viewer
+│   └── swagger.yaml             # OpenAPI 3.0 spec (7 endpoints, 29 schemas)
 │
 ├── Makefile                 # Build automation (build, wasm, npm, test)
 ├── spektr.go                # Package doc
@@ -827,7 +826,7 @@ The translator is optional. You can build QuerySpec manually, from a UI, or use 
 
 The `api/` package provides stateless functions that map 1:1 to REST endpoints. Each function takes a typed request, returns a typed response inside a generic `Response[T]` envelope (`ok: true` + data, or `ok: false` + error). Transport is the consumer's concern — wrap these in an HTTP mux, Lambda handler, or Apps Script relay.
 
-Full interactive documentation: **[`Docs/swagger-ui.html`](Docs/swagger-ui.html)** — open in any browser. OpenAPI 3.0 spec: **[`Docs/swagger.yaml`](Docs/swagger.yaml)**.
+Full interactive documentation: **[Swagger UI](https://petstore.swagger.io/?url=https://raw.githubusercontent.com/spektr-org/spektr/main/Docs/swagger.yaml)** — opens in browser. OpenAPI 3.0 spec: **[`Docs/swagger.yaml`](Docs/swagger.yaml)**.
 
 ### Endpoints
 
@@ -984,7 +983,7 @@ The test suite includes:
 - [x] HTTP API contract (`api/` package — consumer endpoints)
 - [x] Multi-provider translator adapters (`translator/adapters/`)
 - [x] API reference documentation (`Docs/Spektr_API_Reference.docx`)
-- [x] OpenAPI 3.0 / Swagger documentation (`Docs/swagger.yaml` + `Docs/swagger-ui.html`)
+- [x] OpenAPI 3.0 / Swagger documentation (`Docs/swagger.yaml`)
 - [ ] AWS Lambda deployment (stateless multi-tenant analytics service)
 - [ ] Google Sheets integration (Apps Script sidebar → Lambda endpoint)
 - [ ] Python bindings
