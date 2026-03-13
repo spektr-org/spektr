@@ -669,7 +669,7 @@ async function runQuery() {
       const model = document.getElementById('aiModel').value.trim() || undefined;
       if (!key) { showError('Enter an API key to use AI / NL mode.'); return; }
       const summary = buildSummary();
-      const tr = S.translate(q, schema, summary, key, model);
+      const tr = await S.translate(q, schema, summary, key, model);
       if (!tr.ok) { showError('AI translation failed: ' + tr.error); return; }
       spec = tr.data.querySpec;
     } else {

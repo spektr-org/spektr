@@ -14,6 +14,7 @@ var defaultColors = []string{
 }
 
 // BuildChart produces a ChartConfig from a QuerySpec and aggregated groups.
+// For single-measure queries. For multi-measure use BuildMultiMeasureChart.
 func BuildChart(spec QuerySpec, groups []Group) *ChartConfig {
 	if len(groups) == 0 {
 		return nil
@@ -34,7 +35,13 @@ func BuildChart(spec QuerySpec, groups []Group) *ChartConfig {
 	if len(spec.GroupBy) > 0 {
 		config.XAxis = LabelForDimension(spec.GroupBy[0])
 	}
-	config.YAxis = LabelForAggregation(spec.Aggregation)
+
+	// Use measure display name for YAxis when available — avoids generic "Amount"
+	if spec.Measure != "" {
+		config.YAxis = LabelForDimension(spec.Measure)
+	} else {
+		config.YAxis = LabelForAggregation(spec.Aggregation)
+	}
 
 	if len(spec.GroupBy) >= 2 && hasSubGroups(groups) {
 		config.Series = buildMultiSeries(groups)
@@ -43,6 +50,76 @@ func BuildChart(spec QuerySpec, groups []Group) *ChartConfig {
 	}
 
 	config.Colors = assignColors(len(config.Series))
+	return config
+}
+
+// BuildMultiMeasureChart produces a ChartConfig with one series per measure.
+// Used when QuerySpec.Measures has more than one entry — e.g. comparing
+// successful_runs vs failed_runs grouped by playbook_id.
+//
+// Sort alignment: the canonical group order is determined from the first measure,
+// then all subsequent series are reordered to match — so bar positions are
+// consistent across series regardless of sortBy.
+func BuildMultiMeasureChart(spec QuerySpec, view RecordView, measures []string) *ChartConfig {
+	if view.Len() == 0 || len(measures) == 0 {
+		return nil
+	}
+
+	chartType := spec.Visualize
+	if chartType == "" {
+		chartType = "bar"
+	}
+
+	config := &ChartConfig{
+		ChartType:  chartType,
+		Title:      spec.Title,
+		ShowLegend: true,
+		ShowGrid:   chartType != "pie",
+	}
+
+	if len(spec.GroupBy) > 0 {
+		config.XAxis = LabelForDimension(spec.GroupBy[0])
+	}
+	config.YAxis = LabelForAggregation(spec.Aggregation)
+
+	// Build series — canonical group order from first measure, all others aligned to it.
+	series := make([]ChartSeries, 0, len(measures))
+	var canonicalLabels []string // label order established by first measure
+
+	for i, measure := range measures {
+		groups := GroupAndAggregate(view, spec.GroupBy, measure, spec.Aggregation, spec.SortBy, spec.Limit)
+
+		var points []ChartPoint
+		if i == 0 {
+			// First measure: record the canonical label order
+			canonicalLabels = make([]string, len(groups))
+			points = make([]ChartPoint, len(groups))
+			for j, g := range groups {
+				canonicalLabels[j] = g.Label
+				points[j] = ChartPoint{Label: g.Label, Value: RoundTo2(g.Value)}
+			}
+		} else {
+			// Subsequent measures: align to canonical label order to keep bars aligned.
+			// Build a lookup by label, then emit in canonical order.
+			lookup := make(map[string]float64, len(groups))
+			for _, g := range groups {
+				lookup[g.Label] = g.Value
+			}
+			points = make([]ChartPoint, len(canonicalLabels))
+			for j, label := range canonicalLabels {
+				points[j] = ChartPoint{Label: label, Value: RoundTo2(lookup[label])}
+			}
+		}
+
+		series = append(series, ChartSeries{
+			Name:  LabelForDimension(measure),
+			Data:  points,
+			Color: defaultColors[i%len(defaultColors)],
+		})
+	}
+
+	config.Series = series
+	config.Colors = assignColors(len(series))
 	return config
 }
 

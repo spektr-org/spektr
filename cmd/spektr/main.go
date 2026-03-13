@@ -13,6 +13,7 @@ import (
 	"github.com/spektr-org/spektr/helpers"
 	"github.com/spektr-org/spektr/schema"
 	"github.com/spektr-org/spektr/translator"
+	"github.com/spektr-org/spektr/translator/adapters"
 )
 
 // ============================================================================
@@ -28,7 +29,8 @@ func main() {
 	schemaPath := flag.String("schema", "", "Path to pre-built schema JSON (skips auto-detect)")
 	discover := flag.Bool("discover", false, "Print auto-detected schema and exit")
 	refine := flag.Bool("refine", false, "Apply Smart Refine (AI enrichment) to auto-detected schema")
-	model := flag.String("model", "gemini-2.5-flash-lite", "Gemini model name")
+	model := flag.String("model", "", "AI model name (e.g. gemini-2.5-flash-lite, gpt-4o)")
+	endpoint := flag.String("endpoint", "", "AI provider endpoint URL (default: Gemini)")
 	format := flag.String("format", "json", "Output format: json, pretty, text, csv")
 	outFile := flag.String("out", "", "Write output to file instead of stdout")
 	showVersion := flag.Bool("version", false, "Print version and exit")
@@ -47,7 +49,7 @@ Flags:
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, `
 Environment:
-  GEMINI_API_KEY    Required for --query and --refine
+  AI_API_KEY    Required for --query and --refine
 
 Formats:
   json      Full JSON output (default)
@@ -126,9 +128,9 @@ Examples:
 			sch.Name, len(sch.Dimensions), len(sch.Measures), len(sch.SkippedColumns))
 
 		if *refine {
-			apiKey := os.Getenv("GEMINI_API_KEY")
+			apiKey := os.Getenv("AI_API_KEY")
 			if apiKey == "" {
-				fatalf("GEMINI_API_KEY required for --refine")
+				fatalf("AI_API_KEY required for --refine")
 			}
 			refined, err := schema.Refine(sch, schema.RefineConfig{APIKey: apiKey, Model: *model})
 			if err != nil {
@@ -150,9 +152,12 @@ Examples:
 	}
 
 	// ── Query mode ────────────────────────────────────────────────────────
-	apiKey := os.Getenv("GEMINI_API_KEY")
+	apiKey := os.Getenv("AI_API_KEY")
 	if apiKey == "" {
-		fatalf("GEMINI_API_KEY required for --query")
+		fatalf("AI_API_KEY required for --query")
+	}
+	if *model == "" {
+		fatalf("--model is required (e.g. gemini-2.5-flash-lite, gpt-4o)")
 	}
 
 	records, err := helpers.ParseCSV(data, *sch)
@@ -163,7 +168,7 @@ Examples:
 
 	summary := translator.BuildDataSummaryFromRecords(records, *sch)
 
-	t := translator.NewGemini(translator.Config{APIKey: apiKey, Model: *model})
+	t := translator.NewTranslator(adapters.New(apiKey, *model, *endpoint))
 	result, err := t.TranslateWithSummary(*queryStr, *sch, summary)
 	if err != nil {
 		fatalf("Translation failed: %v", err)
@@ -240,7 +245,8 @@ func writeCSV(w *os.File, result *engine.Result) {
 	}
 
 	// Then table data
-	if result.TableData != nil && writeTableCSV(cw, result.TableData) {
+	if result.TableData != nil {
+		writeTableCSV(cw, result.TableData)
 		return
 	}
 
@@ -315,25 +321,15 @@ func writeChartCSV(cw *csv.Writer, chartConfig interface{}) bool {
 	return true
 }
 
-func writeTableCSV(cw *csv.Writer, tableData interface{}) bool {
-	b, err := json.Marshal(tableData)
-	if err != nil {
-		return false
+func writeTableCSV(cw *csv.Writer, td *engine.TableData) {
+	headers := make([]string, len(td.Columns))
+	for i, col := range td.Columns {
+		headers[i] = col.Label
 	}
-
-	var table struct {
-		Headers []string   `json:"headers"`
-		Rows    [][]string `json:"rows"`
-	}
-	if err := json.Unmarshal(b, &table); err != nil || len(table.Headers) == 0 {
-		return false
-	}
-
-	cw.Write(table.Headers)
-	for _, row := range table.Rows {
+	cw.Write(headers)
+	for _, row := range td.Rows {
 		cw.Write(row)
 	}
-	return true
 }
 
 // ============================================================================

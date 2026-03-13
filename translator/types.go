@@ -8,42 +8,50 @@ import (
 // ============================================================================
 // TRANSLATOR — AI boundary for natural language → QuerySpec
 // ============================================================================
-// The Translator is the ONLY component that calls an external AI service.
+// The translator is the ONLY component that calls an external AI service.
 // It receives schema metadata + user question, returns a QuerySpec.
-// It NEVER sees raw data. Only column names, sample values, and the question.
-//
-// TPL origin: handlers/nlm.go (buildQuerySpecPrompt + parseQuerySpecResponse)
-// Key change: Hardcoded finance prompt → schema-driven prompt builder.
+// It NEVER sees raw data — only column names, sample values, and the question.
 // ============================================================================
 
-// Translator translates natural language queries into QuerySpecs.
-// Implementations: Gemini (v1), OpenAI (future), local LLM (future).
-type Translator interface {
-	// Translate converts a natural language query into a QuerySpec.
-	// The schema provides metadata for prompt building.
-	// Returns both the QuerySpec (for engine) and Interpretation (for user preview).
-	Translate(query string, sch schema.Config) (*TranslateResult, error)
+// AIProvider is the single integration point for any AI provider.
+// Consumers implement this interface for their provider of choice.
+//
+// Spektr calls Complete with a fully-formed prompt string and expects
+// the raw text response back. All HTTP transport, authentication, and
+// request/response shaping for the specific provider is the consumer's concern.
+//
+// A reference implementation for Gemini is in translator/adapters/gemini.go.
+// TPL consumers route through their relay by implementing this interface.
+//
+// Example custom adapter:
+//
+//	type MyRelayAdapter struct { relayURL string }
+//
+//	func (a *MyRelayAdapter) Complete(prompt string) (string, error) {
+//	    resp, err := http.Post(a.relayURL, "application/json",
+//	        strings.NewReader(`{"prompt":` + strconv.Quote(prompt) + `}`))
+//	    // ... parse and return text response
+//	}
+type AIProvider interface {
+	Complete(prompt string) (string, error)
 }
 
-// TranslateResult contains both the QuerySpec and the Interpretation.
-// Mirrors TPL's two-phase flow: interpret (preview) → execute (compute).
+// Translator translates natural language queries into QuerySpecs.
+type Translator interface {
+	Translate(query string, sch schema.Config) (*TranslateResult, error)
+	TranslateWithSummary(query string, sch schema.Config, summary *DataSummary) (*TranslateResult, error)
+}
+
+// TranslateResult contains the QuerySpec and the AI's interpretation.
 type TranslateResult struct {
 	QuerySpec      engine.QuerySpec      `json:"querySpec"`
 	Interpretation engine.Interpretation `json:"interpretation"`
 }
 
-// Config holds translator configuration.
+// Config holds AI provider configuration.
+// Consumed by the built-in adapters — custom adapters manage their own config.
 type Config struct {
-	APIKey   string // AI provider API key (consumer's key)
-	Model    string // Model name (e.g., "gemini-2.5-flash-lite")
-	Endpoint string // API endpoint override (empty = default)
-}
-
-// DefaultGeminiConfig returns a Config with sensible Gemini defaults.
-func DefaultGeminiConfig(apiKey string) Config {
-	return Config{
-		APIKey:   apiKey,
-		Model:    "gemini-2.5-flash-lite",
-		Endpoint: "https://generativelanguage.googleapis.com/v1beta/models",
-	}
+	APIKey   string // Consumer's API key
+	Model    string // Model name (e.g. "gemini-2.5-flash-lite", "gpt-4o")
+	Endpoint string // Provider endpoint — leave empty for adapter default
 }

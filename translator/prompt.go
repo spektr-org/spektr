@@ -214,6 +214,7 @@ func buildResponseFormat(sch schema.Config) string {
     "compareFilters": null,
     "aggregation": "sum|count|avg|max|min|list|growth|ratio|none",
     "measure": "%s",
+    "measures": [],
     "groupBy": [],
     "sortBy": "value_desc|value_asc|date_asc|date_desc|alpha_asc",
     "limit": 0,
@@ -275,27 +276,33 @@ TEMPORAL DIMENSIONS: %s
    - "ratio" → percentage comparison between two datasets ("what %% of X was Y")
    - "none" → pass-through
 
-4. "measure" — which numeric field to aggregate (from MEASURES above)
+4. "measure" — which numeric field to aggregate when querying a single measure (from MEASURES above)
 
-5. "groupBy" — dimensions to group by: %s
+5. "measures" — for COMPARISON charts only: list of multiple measures to compare on the same chart
+   - Use when the user wants to compare two or more numeric fields side by side (e.g., "successful vs failed runs by playbook")
+   - Each measure becomes one series on the chart
+   - When "measures" has 2+ entries, "measure" is ignored
+   - Example: measures: ["successful_runs", "failed_runs"], groupBy: ["playbook_id"]
+
+6. "groupBy" — dimensions to group by: %s
    - [] → no grouping (single result)
    - Can combine for multi-dimensional: ["dim1", "dim2"]
 %s
-6. "sortBy":
+7. "sortBy":
    - "value_desc" → highest first (default for totals)
    - "value_asc" → lowest first
    - "date_asc" → chronological (for time series)
    - "date_desc" → reverse chronological
    - "alpha_asc" → alphabetical
 
-7. "limit" — max results (0 = all)
+8. "limit" — max results (0 = all)
 
-8. "visualize" — chart type:
+9. "visualize" — chart type:
    - For intent "chart": "bar", "line", "pie", "stacked_bar", "area"
    - For intent "table": "table"
    - For intent "text": "text"
 
-9. "reply" — natural language template with placeholders:
+10. "reply" — natural language template with placeholders:
    {total}, {count}, {period}, {top_category}, {top_amount}, {avg}, {max}, {min}
    Growth: {growth_percent}, {change_amount}, {earliest_value}, {latest_value}, {direction}
    Ratio: {ratio_percent}, {numerator_total}, {denominator_total}
@@ -362,6 +369,16 @@ func buildExampleTranslations(sch schema.Config) string {
 	if firstDim != "" && secondDim != "" {
 		b.WriteString(fmt.Sprintf("- \"compare %s across %s\" → groupBy:[\"%s\", \"%s\"], intent:\"chart\", visualize:\"stacked_bar\"\n",
 			firstDim, secondDim, secondDim, firstDim))
+	}
+
+	// Multi-measure comparison example (if 2+ measures exist)
+	if len(sch.Measures) >= 2 {
+		m1 := sch.Measures[0].Key
+		m2 := sch.Measures[1].Key
+		if firstDim != "" {
+			b.WriteString(fmt.Sprintf("- \"%s vs %s by %s\" → measures:[\"%s\",\"%s\"], groupBy:[\"%s\"], intent:\"chart\", visualize:\"bar\"\n",
+				m1, m2, firstDim, m1, m2, firstDim))
+		}
 	}
 
 	b.WriteString("\n")

@@ -73,9 +73,9 @@ const S = {
       opts ? JSON.stringify(opts) : undefined
     );
   },
-  translate(q, sch, summary, key, model) {
+  translate(q, sch, summary, key, model, endpoint) {
     return globalThis.__spektr.translate(
-      q, JSON.stringify(sch), JSON.stringify(summary), key, model || undefined
+      q, JSON.stringify(sch), JSON.stringify(summary), key, model, endpoint
     );
   },
 };
@@ -191,11 +191,13 @@ async function runQuery() {
     let spec;
 
     if (queryMode === "ai") {
-      const key   = document.getElementById("aiApiKey").value.trim();
-      const model = document.getElementById("aiModel").value.trim() || undefined;
-      if (!key) { showError("Enter an API key to use AI / NL mode."); return; }
+      const key      = document.getElementById("aiApiKey").value.trim();
+      const model    = document.getElementById("aiModel").value.trim();
+      const endpoint = document.getElementById("aiEndpoint").value.trim() || undefined;
+      if (!key)   { showError("Enter an API key to use AI / NL mode."); return; }
+      if (!model) { showError("Enter a model name (e.g. gemini-2.5-flash-lite, gpt-4o)."); return; }
       const summary = buildSummary();
-      const tr = S.translate(q, schema, summary, key, model);
+      const tr = S.translate(q, schema, summary, key, model, endpoint);
       if (!tr.ok) { showError("AI translation failed: " + tr.error); return; }
       spec = tr.data.querySpec;
     } else {

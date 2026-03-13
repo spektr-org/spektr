@@ -67,10 +67,10 @@ function discover(csv) {
 }
 
 /**
- * Enrich schema with AI (one-time Gemini call).
+ * Enrich schema with AI (one-time call, cache the result).
  * @param {object} schema - Schema config object
- * @param {string} apiKey - Gemini API key
- * @param {string} [model] - Gemini model name
+ * @param {string} apiKey - AI provider API key
+ * @param {string} model - Model name (e.g. gemini-2.5-flash, gpt-4o)
  * @returns {{ ok: boolean, data?: object, error?: string }}
  */
 function refine(schema, apiKey, model) {
@@ -95,22 +95,24 @@ function execute(spec, records, options) {
 }
 
 /**
- * Translate natural language to QuerySpec using Gemini.
+ * Translate natural language to QuerySpec using an AI provider.
  * @param {string} query - Natural language query
  * @param {object} schema - Schema config
  * @param {object} summary - Data summary { recordCount, dimensions }
- * @param {string} apiKey - Gemini API key
- * @param {string} [model] - Gemini model name
+ * @param {string} apiKey - AI provider API key
+ * @param {string} model - Model name (e.g. gemini-2.5-flash-lite, gpt-4o)
+ * @param {string} [endpoint] - Provider endpoint URL (omit for Gemini default)
  * @returns {{ ok: boolean, data?: object, error?: string }}
  */
-function translate(query, schema, summary, apiKey, model) {
+function translate(query, schema, summary, apiKey, model, endpoint) {
   ensureInit();
   return globalThis.__spektr.translate(
     query,
     JSON.stringify(schema),
     JSON.stringify(summary),
     apiKey,
-    model
+    model,
+    endpoint
   );
 }
 

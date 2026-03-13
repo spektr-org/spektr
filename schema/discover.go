@@ -254,7 +254,8 @@ func analyzeColumn(header string, index int, rows [][]string, totalRows int) col
 	// Detect decimals in numeric columns (signals continuous data → measure)
 	if col.colType == typeNumeric {
 		for _, v := range values {
-			if strings.Contains(v, ".") {
+			clean := strings.TrimSuffix(strings.TrimSpace(v), "%")
+			if strings.Contains(clean, ".") {
 				col.hasDecimals = true
 				break
 			}
@@ -401,6 +402,7 @@ func isNumeric(s string) bool {
 	s = strings.TrimPrefix(s, "€")
 	s = strings.TrimPrefix(s, "£")
 	s = strings.TrimPrefix(s, "-")
+	s = strings.TrimSuffix(s, "%") // handle "11.7%" from percentage columns
 	_, err := strconv.ParseFloat(s, 64)
 	return err == nil
 }
@@ -430,7 +432,7 @@ func isDate(s string) bool {
 
 func isBool(s string) bool {
 	s = strings.ToLower(strings.TrimSpace(s))
-	return s == "true" || s == "false" || s == "yes" || s == "no" || s == "1" || s == "0"
+	return s == "true" || s == "false" || s == "yes" || s == "no"
 }
 
 // ============================================================================

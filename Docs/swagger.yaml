@@ -1,0 +1,1063 @@
+openapi: "3.0.3"
+
+info:
+  title: Spektr API
+  description: |
+    **Domain-agnostic analytics engine. Picolytics for any dataset.**
+
+    Spektr takes structured data from any domain — finance, project management, security operations, HR — and produces render-ready analytics output: charts, tables, and text summaries.
+
+    ## Architecture
+
+    Every function in this API is a stateless Go function. Transport (HTTP, Lambda, WASM) is the consumer's concern — this spec describes the canonical contract.
+
+    The typical flow is:
+
+    ```
+    CSV → Discover → (Refine) → Parse → Translate → Execute → Result
+    ```
+
+    Or use the **Pipeline** endpoint for one-shot requests that compose all steps.
+
+    ## Privacy Model
+
+    - **Engine functions** (`/execute`, `/parse`, `/discover`) are pure local computation — no network calls.
+    - **AI functions** (`/refine`, `/translate`) make outbound calls to the configured AI provider.
+    - AI only sees column names and sample values — **never raw data or measure values**.
+    - The consumer provides their own API key on every request.
+
+    ## Response Envelope
+
+    All responses use a generic envelope:
+    - `ok: true` → `data` is populated, `error` is empty
+    - `ok: false` → `error` is populated, `data` is null
+
+  version: "1.0.0"
+  contact:
+    name: Spektr
+    url: https://github.com/spektr-org/spektr
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://localhost:8080
+    description: Local development
+  - url: https://{lambda-url}
+    description: AWS Lambda deployment
+    variables:
+      lambda-url:
+        default: "your-lambda-id.lambda-url.region.on.aws"
+
+tags:
+  - name: Core
+    description: Pure local computation — no AI, no network calls
+  - name: AI
+    description: Functions that make outbound AI calls (require API key)
+  - name: Composite
+    description: Multi-step pipelines composing core + AI functions
+
+paths:
+  /health:
+    get:
+      operationId: health
+      summary: Health check
+      description: Returns the engine version and readiness status. No authentication required.
+      tags: [Core]
+      responses:
+        "200":
+          description: Engine is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+              example:
+                ok: true
+                data:
+                  version: "1.0.0"
+                  status: "ready"
+
+  /discover:
+    post:
+      operationId: discover
+      summary: Auto-detect schema from CSV
+      description: |
+        Inspects a raw CSV and automatically classifies each column as a **dimension** (string, groupable) or **measure** (numeric, aggregatable). Returns a `SchemaConfig` describing the dataset structure.
+
+        The schema can be cached and reused for the same dataset shape. Call `/refine` once to AI-enrich the schema, then reuse the refined schema for all subsequent queries.
+
+        **No AI calls.** Classification is heuristic-based: type detection, cardinality analysis, column name intelligence (e.g. "points", "hours", "cost" → measure), temporal pattern detection, hierarchy inference.
+      tags: [Core]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiscoverRequest"
+            example:
+              csv: "Issue Key,Summary,Issue Type,Status,Priority,Assignee,Story Points\nPROJ-001,Login bug,Bug,Done,P1 - Critical,Alice,3\nPROJ-002,OAuth flow,Story,In Progress,P2 - High,Bob,8"
+              name: "Jira Sprint Export"
+      responses:
+        "200":
+          description: Schema successfully discovered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiscoverResponse"
+              example:
+                ok: true
+                data:
+                  name: "Jira Sprint Export"
+                  version: "1.0"
+                  dimensions:
+                    - key: "status"
+                      displayName: "Status"
+                      sampleValues: ["Done", "In Progress"]
+                      groupable: true
+                      filterable: true
+                    - key: "priority"
+                      displayName: "Priority"
+                      sampleValues: ["P1 - Critical", "P2 - High"]
+                      groupable: true
+                      filterable: true
+                  measures:
+                    - key: "story_points"
+                      displayName: "Story Points"
+                      unit: "points"
+                      defaultAggregation: "avg"
+                      aggregations: ["sum", "avg", "min", "max", "count"]
+                    - key: "record_count"
+                      displayName: "Record Count"
+                      isSynthetic: true
+                      defaultAggregation: "sum"
+                      aggregations: ["sum", "count"]
+
+  /refine:
+    post:
+      operationId: refine
+      summary: AI-enrich a discovered schema
+      description: |
+        Enriches a discovered schema using a **one-time AI call**. Adds human-readable descriptions, corrects misclassifications, detects semantic meaning (temporal fields, ordinal orderings, domain-specific units), and suggests hierarchy relationships.
+
+        **Call this once per schema and cache the result.** Do not call on every request — it makes an outbound AI call and consumes API tokens.
+
+        The input schema is never mutated; a new enriched schema is returned.
+
+        **Privacy:** Only column names and sample values (~500 bytes) are sent to the AI. Never raw data, never measure values.
+      tags: [AI]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefineRequest"
+            example:
+              schema:
+                name: "Jira Sprint Export"
+                dimensions:
+                  - key: "priority"
+                    displayName: "priority"
+                    sampleValues: ["P1 - Critical", "P2 - High", "P3 - Medium"]
+                measures:
+                  - key: "story_points"
+                    displayName: "story_points"
+              apiKey: "AIza..."
+              model: "gemini-2.5-flash-lite"
+      responses:
+        "200":
+          description: Schema enriched successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RefineResponse"
+
+  /parse:
+    post:
+      operationId: parse
+      summary: Parse CSV into structured records
+      description: |
+        Converts a raw CSV into structured records using a schema. Each row becomes a `Record` with dimensions (strings) and measures (numbers).
+
+        The returned records are the input to `/execute`.
+
+        **No AI calls.** Pure parsing and type conversion.
+      tags: [Core]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ParseRequest"
+      responses:
+        "200":
+          description: CSV parsed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ParseResponse"
+              example:
+                ok: true
+                data:
+                  count: 2
+                  records:
+                    - dimensions:
+                        status: "Done"
+                        priority: "P1 - Critical"
+                        assignee: "Alice"
+                      measures:
+                        story_points: 3
+                        record_count: 1
+                    - dimensions:
+                        status: "In Progress"
+                        priority: "P2 - High"
+                        assignee: "Bob"
+                      measures:
+                        story_points: 8
+                        record_count: 1
+
+  /translate:
+    post:
+      operationId: translate
+      summary: Convert natural language to QuerySpec
+      description: |
+        Converts a natural language query into a `QuerySpec` using an AI model. The QuerySpec can be passed directly to `/execute`.
+
+        A `summary` provides lightweight context to the AI without exposing raw data — only record counts and sample dimension values are sent to the AI provider.
+
+        **Privacy:** The AI sees column names, sample dimension values, and the query text. It never sees raw measure values or individual records.
+      tags: [AI]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TranslateRequest"
+            example:
+              query: "which playbooks have the highest failure rate"
+              schema:
+                name: "Playbook Runs"
+                dimensions:
+                  - key: "playbook_id"
+                    displayName: "Playbook ID"
+                    sampleValues: ["c3c8", "a1b2", "d4e5"]
+                  - key: "result"
+                    displayName: "Result"
+                    sampleValues: ["success", "failure"]
+                measures:
+                  - key: "record_count"
+                    displayName: "Record Count"
+                    defaultAggregation: "sum"
+              summary:
+                recordCount: 37
+                dimensions:
+                  playbook_id: ["c3c8", "a1b2", "d4e5"]
+                  result: ["success", "failure"]
+              apiKey: "AIza..."
+      responses:
+        "200":
+          description: Query translated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TranslateResponse"
+              example:
+                ok: true
+                data:
+                  querySpec:
+                    intent: "chart"
+                    filters:
+                      dimensions:
+                        result: ["failure"]
+                    aggregation: "count"
+                    measure: "record_count"
+                    groupBy: ["playbook_id"]
+                    sortBy: "value_desc"
+                    visualize: "bar"
+                    title: "Failure Count by Playbook"
+                    confidence: 0.92
+                  interpretation:
+                    visualType: "bar"
+                    summary: "Showing failure counts grouped by playbook"
+                    confidence: 0.92
+
+  /execute:
+    post:
+      operationId: execute
+      summary: Run a QuerySpec against records
+      description: |
+        Runs a QuerySpec against a set of records. **Pure local computation — no AI, no network calls.**
+
+        The result contains:
+        - `chartConfig` — for rendering charts (Recharts, Chart.js, Google Sheets Charts API)
+        - `tableData` — for rendering tables
+        - `reply` — human-readable summary sentence with resolved placeholders
+
+        The consumer chooses which representation to use.
+      tags: [Core]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteRequest"
+      responses:
+        "200":
+          description: Query executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteResponse"
+              example:
+                ok: true
+                data:
+                  success: true
+                  type: "chart"
+                  reply: "There are 12 failures across all playbooks. The top playbook is c3c8 with 5 failures."
+                  chartConfig:
+                    chartType: "bar"
+                    title: "Failure Count by Playbook"
+                    xAxis: "Playbook ID"
+                    yAxis: "Count"
+                    series:
+                      - name: "Failure Count by Playbook"
+                        data:
+                          - label: "c3c8"
+                            value: 5
+                          - label: "a1b2"
+                            value: 4
+                          - label: "d4e5"
+                            value: 3
+                    showLegend: true
+                    showGrid: true
+
+  /pipeline:
+    post:
+      operationId: pipeline
+      summary: One-shot analysis (Discover → Parse → Translate → Execute)
+      description: |
+        Composes **Discover → Parse → (Translate) → Execute** in one call. Designed for stateless consumers who want results in a single round-trip.
+
+        Two modes:
+        - **`local`** — Keyword-based query matching. No AI, no API key needed. Supports patterns like `"sum story_points by priority"`, `"count records by status"`.
+        - **`ai`** — Natural language translation via AI. Requires `apiKey`. Supports arbitrary questions like `"which assignee closes the most critical bugs?"`.
+
+        Use the individual endpoints when caching schema or records between queries. Use Pipeline for one-off or stateless requests (scripts, automation, Lambda).
+      tags: [Composite]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PipelineRequest"
+            examples:
+              local_mode:
+                summary: Keyword mode (no AI)
+                value:
+                  csv: "playbook_id,result,duration_seconds\nc3c8,success,120\nc3c8,failure,45\na1b2,success,300"
+                  query: "count record_count by playbook_id"
+                  mode: "local"
+              ai_mode:
+                summary: Natural language mode (AI)
+                value:
+                  csv: "playbook_id,result,duration_seconds\nc3c8,success,120\nc3c8,failure,45\na1b2,success,300"
+                  query: "which playbooks fail the most"
+                  mode: "ai"
+                  apiKey: "AIza..."
+      responses:
+        "200":
+          description: Pipeline executed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PipelineResponse"
+              example:
+                ok: true
+                data:
+                  recordCount: 3
+                  query: "count record_count by playbook_id"
+                  schema:
+                    name: "dataset"
+                    dimensions:
+                      - key: "playbook_id"
+                      - key: "result"
+                    measures:
+                      - key: "duration_seconds"
+                      - key: "record_count"
+                  spec:
+                    intent: "chart"
+                    aggregation: "count"
+                    measure: "record_count"
+                    groupBy: ["playbook_id"]
+                    visualize: "bar"
+                  result:
+                    success: true
+                    type: "chart"
+                    reply: "Counted 3 records across 2 playbooks."
+
+components:
+  schemas:
+    # ── Envelope ────────────────────────────────────────────────────
+
+    HealthResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/HealthResult"
+        error:
+          type: string
+      required: [ok]
+
+    HealthResult:
+      type: object
+      properties:
+        version:
+          type: string
+          description: Spektr library version
+          example: "1.0.0"
+        status:
+          type: string
+          description: Engine readiness status
+          enum: [ready]
+      required: [version, status]
+
+    # ── Discover ────────────────────────────────────────────────────
+
+    DiscoverRequest:
+      type: object
+      properties:
+        csv:
+          type: string
+          description: Raw CSV content to analyse. Required.
+        name:
+          type: string
+          description: Override the auto-inferred dataset name.
+        sampleSize:
+          type: integer
+          description: Max rows inspected during discovery. Defaults to 1000. Set to 0 for all rows.
+          default: 1000
+        recoverColumns:
+          type: array
+          items:
+            type: string
+          description: Column names that were auto-skipped but should be force-included as dimensions.
+      required: [csv]
+
+    DiscoverResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/SchemaConfig"
+        error:
+          type: string
+      required: [ok]
+
+    # ── Refine ──────────────────────────────────────────────────────
+
+    RefineRequest:
+      type: object
+      properties:
+        schema:
+          $ref: "#/components/schemas/SchemaConfig"
+        apiKey:
+          type: string
+          description: Consumer's AI provider key. Required.
+        model:
+          type: string
+          description: Override the default AI model.
+          example: "gemini-2.5-flash-lite"
+        endpoint:
+          type: string
+          description: Override the default AI provider endpoint.
+      required: [schema, apiKey]
+
+    RefineResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/SchemaConfig"
+        error:
+          type: string
+      required: [ok]
+
+    # ── Parse ───────────────────────────────────────────────────────
+
+    ParseRequest:
+      type: object
+      properties:
+        csv:
+          type: string
+          description: Raw CSV content to parse. Required.
+        schema:
+          $ref: "#/components/schemas/SchemaConfig"
+      required: [csv, schema]
+
+    ParseResult:
+      type: object
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/Record"
+          description: Parsed dataset ready for Execute.
+        count:
+          type: integer
+          description: Number of records parsed.
+      required: [records, count]
+
+    ParseResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/ParseResult"
+        error:
+          type: string
+      required: [ok]
+
+    # ── Translate ───────────────────────────────────────────────────
+
+    DataSummary:
+      type: object
+      description: |
+        Lightweight description of a parsed dataset. Provides the AI with enough context to understand the data without exposing raw values — only counts and sample dimension values.
+      properties:
+        recordCount:
+          type: integer
+          description: Total number of records in the dataset.
+        dimensions:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          description: Maps each dimension key to a sample of its values (max 8).
+          example:
+            status: ["Done", "In Progress", "Open"]
+            priority: ["P1 - Critical", "P2 - High"]
+      required: [recordCount, dimensions]
+
+    TranslateRequest:
+      type: object
+      properties:
+        query:
+          type: string
+          description: Natural language question. Required.
+          example: "which playbooks have the highest failure rate"
+        schema:
+          $ref: "#/components/schemas/SchemaConfig"
+        summary:
+          $ref: "#/components/schemas/DataSummary"
+        apiKey:
+          type: string
+          description: Consumer's AI provider key. Required.
+        model:
+          type: string
+          description: Override the default AI model.
+        endpoint:
+          type: string
+          description: Override the default AI provider endpoint.
+      required: [query, schema, summary, apiKey]
+
+    TranslateResult:
+      type: object
+      properties:
+        querySpec:
+          $ref: "#/components/schemas/QuerySpec"
+        interpretation:
+          $ref: "#/components/schemas/Interpretation"
+      required: [querySpec, interpretation]
+
+    TranslateResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/TranslateResult"
+        error:
+          type: string
+      required: [ok]
+
+    # ── Execute ─────────────────────────────────────────────────────
+
+    ExecuteOptions:
+      type: object
+      description: Optional engine configuration. All fields optional.
+      properties:
+        defaultMeasure:
+          type: string
+          description: Measure used when the QuerySpec does not specify one.
+          example: "amount"
+        baseCurrency:
+          type: string
+          description: Target currency for conversion (e.g. "SGD"). Requires currencyDimension and exchangeRates.
+          example: "SGD"
+        currencyDimension:
+          type: string
+          description: Dimension key holding currency codes. Defaults to "currency".
+          default: "currency"
+        exchangeRates:
+          type: object
+          additionalProperties:
+            type: number
+          description: Maps currency codes to their rate relative to baseCurrency.
+          example:
+            INR: 0.016
+            USD: 1.35
+
+    ExecuteRequest:
+      type: object
+      properties:
+        spec:
+          $ref: "#/components/schemas/QuerySpec"
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/Record"
+          description: Parsed dataset to run the query against. Required.
+        options:
+          $ref: "#/components/schemas/ExecuteOptions"
+      required: [spec, records]
+
+    ExecuteResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/Result"
+        error:
+          type: string
+      required: [ok]
+
+    # ── Pipeline ────────────────────────────────────────────────────
+
+    PipelineRequest:
+      type: object
+      properties:
+        csv:
+          type: string
+          description: Raw CSV content. Required.
+        query:
+          type: string
+          description: Question to answer against the data. Required.
+          example: "count records by playbook_id"
+        mode:
+          type: string
+          enum: [local, ai]
+          default: local
+          description: |
+            `local` — keyword-based query matching (no AI, no API key needed).
+            `ai` — natural language translation via AI (requires apiKey).
+        apiKey:
+          type: string
+          description: Required when mode is "ai".
+        model:
+          type: string
+          description: Override the default AI model when mode is "ai".
+        schema:
+          $ref: "#/components/schemas/SchemaConfig"
+      required: [csv, query]
+
+    PipelineResult:
+      type: object
+      properties:
+        schema:
+          $ref: "#/components/schemas/SchemaConfig"
+        recordCount:
+          type: integer
+          description: Number of records parsed from the CSV.
+        query:
+          type: string
+          description: Original query string from the request.
+        spec:
+          $ref: "#/components/schemas/QuerySpec"
+        result:
+          $ref: "#/components/schemas/Result"
+      required: [schema, recordCount, query, spec, result]
+
+    PipelineResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        data:
+          $ref: "#/components/schemas/PipelineResult"
+        error:
+          type: string
+      required: [ok]
+
+    # ── Core Domain Types ───────────────────────────────────────────
+
+    Record:
+      type: object
+      description: A single data row with string dimensions and numeric measures.
+      properties:
+        dimensions:
+          type: object
+          additionalProperties:
+            type: string
+          description: String fields used for grouping and filtering.
+          example:
+            status: "Done"
+            priority: "P1 - Critical"
+            assignee: "Alice"
+        measures:
+          type: object
+          additionalProperties:
+            type: number
+          description: Numeric fields used for aggregation.
+          example:
+            story_points: 3
+            record_count: 1
+      required: [dimensions, measures]
+
+    QuerySpec:
+      type: object
+      description: |
+        Declarative query specification. Defines what the engine should compute. Can be hand-constructed, built from a UI, or generated by the AI Translator.
+      properties:
+        intent:
+          type: string
+          enum: [text, table, chart]
+          description: Output type.
+        filters:
+          $ref: "#/components/schemas/Filters"
+        compareFilters:
+          $ref: "#/components/schemas/Filters"
+          description: For ratio queries — defines the numerator set.
+        aggregation:
+          type: string
+          enum: [sum, count, avg, max, min, list, growth, ratio]
+          description: How to aggregate the measure.
+        measure:
+          type: string
+          description: Which measure to aggregate.
+          example: "story_points"
+        groupBy:
+          type: array
+          items:
+            type: string
+          description: Dimension keys to group by.
+          example: ["priority"]
+        sortBy:
+          type: string
+          enum: [value_desc, value_asc, label_asc, label_desc, date_asc, date_desc]
+          description: Sort order for groups.
+        limit:
+          type: integer
+          description: Max groups returned. 0 = all.
+          default: 0
+        visualize:
+          type: string
+          enum: [bar, line, pie, table, text]
+          description: Preferred visualization type.
+        title:
+          type: string
+          description: Chart or table title.
+        reply:
+          type: string
+          description: |
+            Template with placeholders resolved after computation.
+            Available: `{total}`, `{count}`, `{period}`, `{currency}`, `{top_category}`, `{top_amount}`, `{avg}`, `{max}`, `{min}`, `{growth_percent}`, `{direction}`, `{ratio_percent}`, etc.
+          example: "There are {total} bugs. Top priority is {top_category} with {top_amount}."
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 1
+          description: AI translator confidence score. 1.0 for hand-built specs.
+
+    Filters:
+      type: object
+      description: Dimension-based record selection. Values within a dimension are OR-combined. Dimensions are AND-combined. Case-insensitive matching.
+      properties:
+        dimensions:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          description: Maps dimension keys to allowed values.
+          example:
+            priority: ["P1 - Critical", "P2 - High"]
+            status: ["Open", "In Progress"]
+
+    Result:
+      type: object
+      description: Engine output — render-ready for charts, tables, or text.
+      properties:
+        success:
+          type: boolean
+          description: Whether execution succeeded.
+        type:
+          type: string
+          enum: [chart, table, text]
+          description: Result type matching the QuerySpec intent.
+        reply:
+          type: string
+          description: Human-readable answer with resolved placeholders.
+        chartConfig:
+          $ref: "#/components/schemas/ChartConfig"
+        tableData:
+          $ref: "#/components/schemas/TableData"
+        data:
+          description: TextData when type is "text".
+        displayUnit:
+          type: string
+          description: Currency or unit for display.
+        shouldConvert:
+          type: boolean
+          description: Whether multi-currency normalisation was applied.
+      required: [success, type]
+
+    ChartConfig:
+      type: object
+      description: Render-ready chart configuration. Compatible with Recharts, Chart.js, Google Sheets Charts API.
+      properties:
+        chartType:
+          type: string
+          enum: [bar, line, pie]
+        title:
+          type: string
+        xAxis:
+          type: string
+        yAxis:
+          type: string
+        series:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              data:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    label:
+                      type: string
+                    value:
+                      type: number
+              color:
+                type: string
+        colors:
+          type: array
+          items:
+            type: string
+        showLegend:
+          type: boolean
+        showGrid:
+          type: boolean
+
+    TableData:
+      type: object
+      description: Render-ready table with typed columns and string rows.
+      properties:
+        title:
+          type: string
+        columns:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              label:
+                type: string
+              type:
+                type: string
+                enum: [text, number]
+              align:
+                type: string
+                enum: [left, right, center]
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+        summary:
+          type: object
+          properties:
+            label:
+              type: string
+            values:
+              type: object
+              additionalProperties:
+                type: string
+
+    Interpretation:
+      type: object
+      description: What the AI understood from the natural language query.
+      properties:
+        visualType:
+          type: string
+          enum: [bar, line, pie, table, text]
+        summary:
+          type: string
+          description: Human-readable interpretation summary.
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              value:
+                type: string
+        suggestions:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              modifier:
+                type: string
+        confidence:
+          type: number
+          format: float
+
+    SchemaConfig:
+      type: object
+      description: |
+        Dataset shape description. Tells Spektr what dimensions and measures exist, their types, and how to interpret them.
+      properties:
+        name:
+          type: string
+          description: Dataset name (auto-inferred or provided).
+          example: "Jira Sprint Export"
+        version:
+          type: string
+        dimensions:
+          type: array
+          items:
+            $ref: "#/components/schemas/DimensionMeta"
+        measures:
+          type: array
+          items:
+            $ref: "#/components/schemas/MeasureMeta"
+        skippedColumns:
+          type: array
+          items:
+            type: object
+            properties:
+              column:
+                type: string
+              reason:
+                type: string
+              recoverable:
+                type: boolean
+        currency:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+            codeDimension:
+              type: string
+            defaultCurrency:
+              type: string
+            rates:
+              type: object
+              additionalProperties:
+                type: number
+        discoveredFrom:
+          type: string
+        discoveredAt:
+          type: string
+          format: date-time
+        refinedAt:
+          type: string
+          format: date-time
+        refinedBy:
+          type: string
+
+    DimensionMeta:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Column key (snake_case).
+          example: "priority"
+        displayName:
+          type: string
+          description: Human-readable name.
+          example: "Priority"
+        description:
+          type: string
+          description: AI-generated description of this dimension.
+        sampleValues:
+          type: array
+          items:
+            type: string
+          description: Sample values from the data (max 8).
+          example: ["P1 - Critical", "P2 - High", "P3 - Medium"]
+        groupable:
+          type: boolean
+          default: true
+        filterable:
+          type: boolean
+          default: true
+        parent:
+          type: string
+          description: Parent dimension key for hierarchy (e.g. sub_category → category).
+        isTemporal:
+          type: boolean
+          description: Whether this dimension represents time/dates.
+        isCurrencyCode:
+          type: boolean
+          description: Whether this dimension holds currency codes (e.g. SGD, USD).
+        sortHint:
+          type: string
+          description: Ordinal sort hint from Smart Refine (e.g. "P1 > P2 > P3 > P4").
+        temporalOrder:
+          type: string
+        cardinalityHint:
+          type: string
+          enum: [low, medium, high]
+      required: [key, displayName]
+
+    MeasureMeta:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Column key (snake_case).
+          example: "story_points"
+        displayName:
+          type: string
+          description: Human-readable name.
+          example: "Story Points"
+        description:
+          type: string
+          description: AI-generated description of this measure.
+        unit:
+          type: string
+          description: Measurement unit (e.g. "points", "hours", "currency").
+          example: "points"
+        isCurrency:
+          type: boolean
+          description: Whether this measure represents monetary values.
+        isSynthetic:
+          type: boolean
+          description: Whether this measure was auto-generated (e.g. record_count).
+        aggregations:
+          type: array
+          items:
+            type: string
+          description: Supported aggregation types for this measure.
+          example: ["sum", "avg", "min", "max", "count"]
+        defaultAggregation:
+          type: string
+          description: Recommended aggregation type.
+          example: "avg"
+      required: [key, displayName, defaultAggregation]

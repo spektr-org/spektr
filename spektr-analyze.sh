@@ -15,7 +15,7 @@
 #
 # Prerequisites:
 #   - spektr binary built: go build -o ./bin/spektr ./cmd/spektr/
-#   - GEMINI_API_KEY env var set
+#   - AI_API_KEY env var set
 # ============================================================================
 
 set -e
@@ -39,8 +39,8 @@ if [ -z "$SPEKTR" ]; then
     exit 1
 fi
 
-if [ -z "$GEMINI_API_KEY" ]; then
-    echo "Error: GEMINI_API_KEY not set"
+if [ -z "$AI_API_KEY" ]; then
+    echo "Error: AI_API_KEY not set"
     exit 1
 fi
 

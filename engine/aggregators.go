@@ -326,7 +326,7 @@ func LabelForDimension(dimension string) string {
 func LabelForAggregation(aggregation string) string {
 	switch aggregation {
 	case "sum":
-		return "Amount"
+		return "Total"
 	case "count":
 		return "Count"
 	case "avg":

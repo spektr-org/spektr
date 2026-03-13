@@ -91,22 +91,26 @@ chmod +x spektr-analyze.sh
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                     YOUR APPLICATION                      │
-├──────────┬──────────────┬──────────────┬─────────────────┤
-│   CLI    │  Translator  │    Engine    │     Schema       │
-│          │              │              │                  │
-│  CSV →   │  NL → Query  │  Query →     │  Auto-Detect     │
-│  Query → │  (Gemini,    │  Result      │  (heuristics)    │
-│  CSV out │   OpenAI)    │  (local,     │                  │
-│          │              │   no AI)     │  Smart Refine    │
-│          │  Optional —  │  ← Core ──→ │  (one-time AI    │
-│          │  bring your  │  zero deps   │   enrichment)    │
-│          │  own LLM     │  WASM-safe   │                  │
-└──────────┴──────────────┴──────────────┴─────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        YOUR APPLICATION                           │
+├──────────┬──────────────┬──────────────┬─────────────────────────┤
+│   CLI    │  Translator  │    Engine    │     Schema               │
+│          │              │              │                          │
+│  CSV →   │  NL → Query  │  Query →     │  Auto-Detect             │
+│  Query → │  (Gemini,    │  Result      │  (heuristics)            │
+│  CSV out │   OpenAI)    │  (local,     │                          │
+│          │              │   no AI)     │  Smart Refine            │
+│          │  Optional —  │  ← Core ──→ │  (one-time AI            │
+│          │  bring your  │  zero deps   │   enrichment)            │
+│          │  own LLM     │  WASM-safe   │                          │
+└──────┬───┴──────────────┴──────────────┴─────────────────────────┘
+       │
+       ├──→  Go binary (CLI, Lambda)
+       ├──→  WASM (browser, Node.js, Chrome extension)
+       └──→  npm package (@spektr/engine)
 ```
 
-The engine has **zero external dependencies** and never calls any AI service. All computation is local. This makes it safe for WASM compilation and privacy-sensitive environments.
+The engine has **zero external dependencies** and never calls any AI service. All computation is local. This makes it safe for WASM compilation, privacy-sensitive environments, and browser-side execution.
 
 ## Schema Discovery
 
@@ -154,6 +158,35 @@ Auto-Detect has been validated with test suites across three distinct domains:
 | **E-commerce** (retail orders) | 9 | 6 | 1 | ✅ multi-currency | sub_category→category |
 | **HR** (employee data) | 7 | 4 | 2 | — | — |
 
+## WASM + npm — Use Spektr in JavaScript
+
+Spektr compiles to WebAssembly and ships as an npm package. The same engine that runs in the CLI runs in Node.js and the browser.
+
+```bash
+npm install @spektr/engine
+```
+
+```javascript
+const spektr = require('@spektr/engine');
+
+await spektr.init();                                    // Load WASM (once)
+
+spektr.discover(csvString)                               // CSV → Schema
+spektr.refine(schema, apiKey, model?)                    // Schema → Enriched Schema
+spektr.parseCSV(csvString, schema)                       // CSV + Schema → Records
+spektr.execute(querySpec, records, options?)              // QuerySpec + Records → Result
+spektr.translate(query, schema, summary, apiKey, model?) // NL → QuerySpec (via Gemini)
+spektr.version()                                         // "0.2.0"
+```
+
+All functions return `{ ok: true, data: ... }` or `{ ok: false, error: "..." }`.
+
+Full TypeScript definitions included (`index.d.ts`).
+
+## Browser Demo + Chrome Extension
+
+Spektr includes a standalone browser demo (`npm/demo.html`) and a Chrome extension (`spektr-extension/`), both powered by the WASM binary. The browser demo lets you drop a CSV, type a query, and see results — no server, no signup, no data leaving your browser. The Chrome extension provides a popup interface for quick analysis of CSV data from any page.
+
 ## Installation
 
 ### As a Go library
@@ -170,6 +203,23 @@ Requires Go 1.21+.
 git clone https://github.com/spektr-org/spektr
 cd spektr
 go build -o ./bin/spektr ./cmd/spektr/
+```
+
+### As an npm package
+
+```bash
+npm install @spektr/engine
+```
+
+### Build all targets
+
+```bash
+make build      # CLI binary → bin/spektr
+make wasm       # WASM binary → bin/spektr.wasm
+make npm        # Copy WASM + wasm_exec.js into npm/
+make test       # Run Go tests
+make test-npm   # Run Node.js WASM test
+make all        # Everything
 ```
 
 ## Quick Start
@@ -588,9 +638,15 @@ Rules applied:
 
 ```
 spektr/
+├── api/                     # HTTP API contract for consumers
+│   ├── api.go                   # HTTP handlers (query endpoint, discover endpoint)
+│   └── contract.go              # Request/response types for API consumers
+│
 ├── cmd/
-│   └── spektr/
-│       └── main.go          # CLI binary (v0.2.0)
+│   ├── spektr/
+│   │   └── main.go          # CLI binary (v0.2.0)
+│   └── wasm/
+│       └── main.go          # WASM entry point (syscall/js bridge)
 │
 ├── engine/                  # Core computation — zero dependencies
 │   ├── view.go                  # RecordView interface + all implementations
@@ -598,7 +654,7 @@ spektr/
 │   ├── filters.go               # Dimension-based filtering → SubView
 │   ├── aggregators.go           # Grouping, aggregation, sorting, formatting
 │   ├── executor.go              # Main pipeline: Execute() + placeholder resolution
-│   ├── chart_builder.go         # Groups → ChartConfig
+│   ├── chart_builder.go         # Groups → ChartConfig (including multi-measure)
 │   ├── table_builder.go         # Groups → TableData
 │   ├── text_builder.go          # Groups → TextData (includes growth)
 │   └── options.go               # Functional options: WithCurrency, WithDefaultMeasure
@@ -613,13 +669,37 @@ spektr/
 │
 ├── translator/              # AI boundary (natural language → QuerySpec)
 │   ├── types.go                 # Translator interface, Config
+│   ├── ai.go                    # Common AI service abstraction
 │   ├── prompt.go                # Schema-driven prompt builder
 │   ├── parser.go                # JSON response parser
-│   └── gemini.go                # Google Gemini implementation
+│   └── adapters/                # Provider-specific implementations
+│       ├── adapters.go              # Adapter interface + factory
+│       ├── gemini.go                # Google Gemini implementation
+│       └── openai.go                # OpenAI implementation
 │
 ├── helpers/                 # Convenience utilities
 │   └── csv.go                   # CSV → []Record / RecordView parser
 │
+├── npm/                     # npm package (@spektr/engine)
+│   ├── package.json             # v0.2.0
+│   ├── index.js                 # JS wrapper over WASM bridge
+│   ├── index.d.ts               # Full TypeScript type definitions
+│   ├── demo.html                # Standalone browser demo (WASM-powered)
+│   └── test.js                  # Node.js integration test
+│
+├── spektr-extension/        # Chrome extension (popup analytics)
+│   ├── manifest.json
+│   ├── popup.html
+│   ├── popup.js
+│   └── icons/
+│
+├── Docs/                    # Documentation
+│   ├── Spektr_API_Reference.docx
+│   ├── spektr-architecture-design-v3.md
+│   ├── swagger.yaml             # OpenAPI 3.0 spec (7 endpoints, 29 schemas)
+│   └── swagger-ui.html          # Self-contained Swagger UI viewer
+│
+├── Makefile                 # Build automation (build, wasm, npm, test)
 ├── spektr.go                # Package doc
 └── spektr-analyze.sh        # Batch analysis wrapper script
 ```
@@ -627,11 +707,15 @@ spektr/
 ### Dependency Rule
 
 ```
-engine     ← has ZERO external dependencies (WASM-safe)
-schema     ← no dependency on engine
-translator ← depends on engine (QuerySpec) + schema (Config)
-helpers    ← depends on engine + schema
-cmd/spektr ← depends on all packages (CLI wiring)
+engine              ← has ZERO external dependencies (WASM-safe)
+schema              ← no dependency on engine
+translator          ← depends on engine (QuerySpec) + schema (Config)
+translator/adapters ← implements translator interface (Gemini, OpenAI)
+api                 ← depends on engine + schema + translator + helpers (HTTP layer)
+helpers             ← depends on engine + schema
+cmd/spektr          ← depends on all packages (CLI wiring)
+cmd/wasm            ← depends on all packages (JS bridge via syscall/js)
+npm/                ← wraps cmd/wasm output (no Go dependency at runtime)
 ```
 
 ## Integration Tiers
@@ -714,18 +798,21 @@ This is what production applications use. The adapter is declared once and reuse
 
 ## AI Translator (Optional)
 
-The translator converts natural language to QuerySpec using an LLM. It needs a schema to build prompts — it never sees raw data.
+The translator converts natural language to QuerySpec using an LLM. It needs a schema to build prompts — it never sees raw data. Multiple AI providers are supported through the adapter pattern.
 
 ```go
 import (
     "github.com/spektr-org/spektr/translator"
+    "github.com/spektr-org/spektr/translator/adapters"
     "github.com/spektr-org/spektr/schema"
     "github.com/spektr-org/spektr/engine"
 )
 
-// Configure
-cfg := translator.DefaultGeminiConfig("your-api-key")
-t := translator.NewGemini(cfg)
+// Gemini
+t := adapters.NewGemini(adapters.Config{APIKey: "your-key", Model: "gemini-2.5-flash"})
+
+// OpenAI
+t := adapters.NewOpenAI(adapters.Config{APIKey: "your-key", Model: "gpt-4o"})
 
 // Translate
 result, _ := t.Translate("show spending by category", mySchema)
@@ -735,6 +822,58 @@ engineResult, _ := engine.Execute(result.QuerySpec, view)
 ```
 
 The translator is optional. You can build QuerySpec manually, from a UI, or use any other AI provider — just produce a valid QuerySpec and hand it to the engine.
+
+## HTTP API (Consumer Integration)
+
+The `api/` package provides stateless functions that map 1:1 to REST endpoints. Each function takes a typed request, returns a typed response inside a generic `Response[T]` envelope (`ok: true` + data, or `ok: false` + error). Transport is the consumer's concern — wrap these in an HTTP mux, Lambda handler, or Apps Script relay.
+
+Full interactive documentation: **[`Docs/swagger-ui.html`](Docs/swagger-ui.html)** — open in any browser. OpenAPI 3.0 spec: **[`Docs/swagger.yaml`](Docs/swagger.yaml)**.
+
+### Endpoints
+
+| Endpoint | Function | AI Call | Description |
+|----------|----------|--------|-------------|
+| `GET /health` | `api.Health()` | No | Version and readiness status |
+| `POST /discover` | `api.Discover(req)` | No | CSV → schema (heuristic classification) |
+| `POST /refine` | `api.Refine(req)` | Yes | Schema → enriched schema (one-time AI call) |
+| `POST /parse` | `api.Parse(req)` | No | CSV + schema → `[]Record` |
+| `POST /translate` | `api.Translate(req)` | Yes | Natural language → QuerySpec |
+| `POST /execute` | `api.Execute(req)` | No | QuerySpec + records → Result |
+| `POST /pipeline` | `api.Pipeline(req)` | Optional | One-shot: CSV + query → Result |
+
+### Pipeline — One-Shot Analysis
+
+The Pipeline endpoint composes all steps in a single call. Two modes:
+
+```go
+// Local mode — keyword matching, no AI, no API key
+resp := api.Pipeline(api.PipelineRequest{
+    CSV:   csvContent,
+    Query: "sum duration_seconds by playbook_id",
+    Mode:  api.PipelineModeLocal,
+})
+
+// AI mode — natural language, requires API key
+resp := api.Pipeline(api.PipelineRequest{
+    CSV:    csvContent,
+    Query:  "which playbooks have the highest failure rate",
+    Mode:   api.PipelineModeAI,
+    APIKey: "AIza...",
+})
+```
+
+Stateless by design — every request is self-contained, making it ideal for Lambda deployment where one instance serves unlimited domains.
+
+```
+┌─────────────────┐
+│ Jira Sheet      │──┐
+└─────────────────┘  │
+┌─────────────────┐  │    ┌──────────────────┐
+│ FinOps Sheet    │──┼───→│  Single Endpoint  │──→ Gemini API
+└─────────────────┘  │    │  (stateless)      │    (query → QuerySpec)
+┌─────────────────┐  │    └──────────────────┘
+│ SOAR Sheet      │──┘
+```
 
 ## Output Formats
 
@@ -811,7 +950,11 @@ Ready for Google Sheets, Excel, or any spreadsheet. Use `--format csv --out resu
 ## Testing
 
 ```bash
+# Go tests
 go test ./... -v
+
+# WASM / npm test
+cd npm && node test.js
 ```
 
 The test suite includes:
@@ -820,6 +963,7 @@ The test suite includes:
 - **Schema tests** — Auto-Detect classification, hierarchy detection, currency recognition, edge cases
 - **Smart Refine tests** — 21 tests covering payload building, response parsing, enrichment application, deep copy isolation (all mocked, no real AI calls)
 - **Validation tests** — Phase 6 cross-domain validation against Jira, e-commerce, and HR datasets, verifying correct dimension/measure classification, unit inference, temporal detection, and hierarchy discovery
+- **WASM integration test** — End-to-end Node.js test: init → discover → parseCSV → execute, verifying the full pipeline works through the WASM bridge
 
 ## Roadmap
 
@@ -827,14 +971,23 @@ The test suite includes:
 - [x] DomainAdapter for zero-copy typed access
 - [x] Schema Auto-Detect (heuristic classification from CSV)
 - [x] Smart Refine (one-time AI enrichment via Gemini)
-- [x] AI translator (Gemini)
+- [x] AI translator (Gemini + OpenAI via adapter pattern)
 - [x] CLI binary with CSV output (`--format csv --out results.csv`)
 - [x] Cross-domain validation (Jira, e-commerce, HR)
-- [ ] WASM build for browser/Node.js
-- [ ] npm package (`@spektr/engine`)
+- [x] WASM build for browser/Node.js (`cmd/wasm/main.go`)
+- [x] npm package (`@spektr/engine` v0.2.0)
+- [x] Batch analysis script (`spektr-analyze.sh`)
+- [x] Browser demo (standalone HTML + WASM, no server)
+- [x] Chrome extension (popup analytics on any page)
+- [x] Makefile build automation
+- [x] Multi-measure comparison charts (`BuildMultiMeasureChart`)
+- [x] HTTP API contract (`api/` package — consumer endpoints)
+- [x] Multi-provider translator adapters (`translator/adapters/`)
+- [x] API reference documentation (`Docs/Spektr_API_Reference.docx`)
+- [x] OpenAPI 3.0 / Swagger documentation (`Docs/swagger.yaml` + `Docs/swagger-ui.html`)
+- [ ] AWS Lambda deployment (stateless multi-tenant analytics service)
+- [ ] Google Sheets integration (Apps Script sidebar → Lambda endpoint)
 - [ ] Python bindings
-- [ ] Google Sheets integration
-- [ ] OpenAI translator implementation
 - [ ] Streaming execution for large datasets
 
 ## License

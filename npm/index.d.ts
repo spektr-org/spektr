@@ -149,9 +149,9 @@ export function init(): Promise<void>;
 export function discover(csv: string): SpektrResult<SchemaConfig>;
 
 /**
- * Enrich schema with AI (one-time Gemini call).
+ * Enrich schema with AI (one-time call, cache the result).
  */
-export function refine(schema: SchemaConfig, apiKey: string, model?: string): SpektrResult<SchemaConfig>;
+export function refine(schema: SchemaConfig, apiKey: string, model: string): SpektrResult<SchemaConfig>;
 
 /**
  * Execute a QuerySpec against records.
@@ -159,14 +159,15 @@ export function refine(schema: SchemaConfig, apiKey: string, model?: string): Sp
 export function execute(spec: QuerySpec, records: Record[], options?: ExecuteOptions): SpektrResult<EngineResult>;
 
 /**
- * Translate natural language to QuerySpec using Gemini.
+ * Translate natural language to QuerySpec using an AI provider.
  */
 export function translate(
   query: string,
   schema: SchemaConfig,
   summary: DataSummary,
   apiKey: string,
-  model?: string
+  model: string,
+  endpoint?: string
 ): SpektrResult<TranslateResult>;
 
 /**

@@ -513,9 +513,14 @@
                  placeholder="Your API key (stays in this browser)">
         </div>
         <div class="field-group" style="max-width:180px">
-          <span class="field-label">Model (optional)</span>
+          <span class="field-label">Model</span>
           <input class="model-input" id="aiModel" type="text"
-                 placeholder="e.g. gemini-1.5-flash">
+                 placeholder="e.g. gemini-2.5-flash-lite, gpt-4o">
+        </div>
+        <div class="field-row">
+          <span class="field-label">Endpoint <span style="opacity:0.5;font-weight:400">(optional — leave blank for Gemini)</span></span>
+          <input class="model-input" id="aiEndpoint" type="text"
+                 placeholder="e.g. https://api.openai.com/v1">
         </div>
       </div>
     </div>

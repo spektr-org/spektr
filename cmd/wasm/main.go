@@ -11,6 +11,7 @@ import (
 	"github.com/spektr-org/spektr/helpers"
 	"github.com/spektr-org/spektr/schema"
 	"github.com/spektr-org/spektr/translator"
+	"github.com/spektr-org/spektr/translator/adapters"
 )
 
 // ============================================================================
@@ -29,7 +30,7 @@ import (
 //   __spektr.execute(querySpecJSON, recordsJSON, optionsJSON)
 //     → JSON result (chart/table/text)
 //
-//   __spektr.translate(query, schemaJSON, summaryJSON, apiKey, model)
+//   __spektr.translate(query, schemaJSON, summaryJSON, apiKey, model, [endpoint])
 //     → JSON { querySpec, interpretation }
 //
 //   __spektr.parseCSV(csvString, schemaJSON)
@@ -90,29 +91,34 @@ func jsDiscover(this js.Value, args []js.Value) interface{} {
 
 func jsRefine(this js.Value, args []js.Value) interface{} {
 	if len(args) < 2 {
-		return errResult("refine requires 2-3 arguments: schemaJSON, apiKey, [model]")
+		return newRejectedPromise("refine requires 2-3 arguments: schemaJSON, apiKey, [model]")
 	}
 
 	var config schema.Config
 	if err := json.Unmarshal([]byte(args[0].String()), &config); err != nil {
-		return errResult(fmt.Sprintf("invalid schema JSON: %v", err))
+		return newRejectedPromise(fmt.Sprintf("invalid schema JSON: %v", err))
 	}
 
 	apiKey := args[1].String()
-	model := "gemini-2.5-flash"
+	model := ""
 	if len(args) > 2 && !args[2].IsUndefined() {
 		model = args[2].String()
 	}
-
-	refined, err := schema.Refine(&config, schema.RefineConfig{
-		APIKey: apiKey,
-		Model:  model,
-	})
-	if err != nil {
-		return errResult(fmt.Sprintf("refine failed: %v", err))
+	if model == "" {
+		return newRejectedPromise("refine requires model (e.g. gemini-2.5-flash, gpt-4o)")
 	}
 
-	return okResult(refined)
+	cfgCopy := config
+	cfg := schema.RefineConfig{APIKey: apiKey, Model: model}
+
+	return newPromise(func(resolve, reject func(interface{})) {
+		refined, err := schema.Refine(&cfgCopy, cfg)
+		if err != nil {
+			resolve(errResult(fmt.Sprintf("refine failed: %v", err)))
+			return
+		}
+		resolve(okResult(refined))
+	})
 }
 
 // ============================================================================
@@ -178,46 +184,47 @@ func jsExecute(this js.Value, args []js.Value) interface{} {
 // ============================================================================
 
 func jsTranslate(this js.Value, args []js.Value) interface{} {
-	if len(args) < 3 {
-		return errResult("translate requires 3-5 arguments: query, schemaJSON, summaryJSON, [apiKey], [model]")
+	if len(args) < 4 {
+		return newRejectedPromise("translate requires 4-6 arguments: query, schemaJSON, summaryJSON, apiKey, model, [endpoint]")
 	}
 
 	query := args[0].String()
 
 	var sch schema.Config
 	if err := json.Unmarshal([]byte(args[1].String()), &sch); err != nil {
-		return errResult(fmt.Sprintf("invalid schema JSON: %v", err))
+		return newRejectedPromise(fmt.Sprintf("invalid schema JSON: %v", err))
 	}
 
 	var summary translator.DataSummary
 	if err := json.Unmarshal([]byte(args[2].String()), &summary); err != nil {
-		return errResult(fmt.Sprintf("invalid summary JSON: %v", err))
+		return newRejectedPromise(fmt.Sprintf("invalid summary JSON: %v", err))
 	}
 
-	apiKey := ""
-	if len(args) > 3 && !args[3].IsUndefined() {
-		apiKey = args[3].String()
-	}
+	apiKey := args[3].String()
 	if apiKey == "" {
-		return errResult("translate requires apiKey")
+		return newRejectedPromise("translate requires apiKey")
 	}
 
-	model := "gemini-2.5-flash"
-	if len(args) > 4 && !args[4].IsUndefined() {
-		model = args[4].String()
+	if len(args) < 5 || args[4].IsUndefined() || args[4].String() == "" {
+		return newRejectedPromise("translate requires model (e.g. gemini-2.5-flash, gpt-4o)")
+	}
+	model := args[4].String()
+
+	endpoint := ""
+	if len(args) > 5 && !args[5].IsUndefined() {
+		endpoint = args[5].String()
 	}
 
-	t := translator.NewGemini(translator.Config{
-		APIKey: apiKey,
-		Model:  model,
+	t := translator.NewTranslator(adapters.New(apiKey, model, endpoint))
+
+	return newPromise(func(resolve, reject func(interface{})) {
+		result, err := t.TranslateWithSummary(query, sch, &summary)
+		if err != nil {
+			resolve(errResult(fmt.Sprintf("translate failed: %v", err)))
+			return
+		}
+		resolve(okResult(result))
 	})
-
-	result, err := t.TranslateWithSummary(query, sch, &summary)
-	if err != nil {
-		return errResult(fmt.Sprintf("translate failed: %v", err))
-	}
-
-	return okResult(result)
 }
 
 // ============================================================================
@@ -253,6 +260,49 @@ func jsVersion(this js.Value, args []js.Value) interface{} {
 // ============================================================================
 // HELPERS — JSON bridge
 // ============================================================================
+
+
+// ============================================================================
+// PROMISE HELPERS — Required for async HTTP calls in WASM
+// ============================================================================
+
+// newPromise runs fn in a goroutine and returns a JS Promise.
+// fn must call resolve(value) exactly once.
+func newPromise(fn func(resolve, reject func(interface{}))) js.Value {
+	var resolve, reject js.Func
+	promise := js.Global().Get("Promise").New(js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		resolve = js.FuncOf(func(this js.Value, pArgs []js.Value) interface{} {
+			if len(pArgs) > 0 {
+				args[0].Invoke(pArgs[0])
+			}
+			return nil
+		})
+		reject = js.FuncOf(func(this js.Value, pArgs []js.Value) interface{} {
+			if len(pArgs) > 0 {
+				args[1].Invoke(pArgs[0])
+			}
+			return nil
+		})
+		go func() {
+			defer resolve.Release()
+			defer reject.Release()
+			fn(
+				func(v interface{}) { resolve.Invoke(v) },
+				func(v interface{}) { reject.Invoke(v) },
+			)
+		}()
+		return nil
+	}))
+	return promise
+}
+
+// newRejectedPromise returns a Promise that resolves immediately with an error result.
+// (We resolve rather than reject so callers always get { ok, error } shape.)
+func newRejectedPromise(msg string) js.Value {
+	return newPromise(func(resolve, reject func(interface{})) {
+		resolve(errResult(msg))
+	})
+}
 
 func okResult(data interface{}) interface{} {
 	b, err := json.Marshal(data)

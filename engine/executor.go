@@ -58,6 +58,11 @@ func Execute(spec QuerySpec, view RecordView, opts ...Option) (*Result, error) {
 		return executeRatio(spec, view, measure, cfg)
 	}
 
+	// ── MULTI-MEASURE COMPARISON CHART (early return) ──────────────────────
+	if spec.Intent == "chart" && len(spec.Measures) > 1 {
+		return executeMultiMeasure(spec, view, cfg)
+	}
+
 	// 1. Apply filters → SubView (zero-copy)
 	filtered := ApplyFilters(view, spec.Filters)
 
@@ -131,6 +136,44 @@ func Execute(spec QuerySpec, view RecordView, opts ...Option) (*Result, error) {
 	result.Reply = ResolvePlaceholders(spec.Reply, groups, filtered, measure, displayUnit)
 
 	return result, nil
+}
+
+// ============================================================================
+// MULTI-MEASURE EXECUTION (early return path)
+// ============================================================================
+
+func executeMultiMeasure(spec QuerySpec, view RecordView, cfg *config) (*Result, error) {
+	filtered := ApplyFilters(view, spec.Filters)
+	if filtered.Len() == 0 {
+		return &Result{
+			Success: true,
+			Type:    "text",
+			Reply:   "No records match your query filters. Try broadening your search.",
+		}, nil
+	}
+
+	log.Printf("📊 Spektr: Multi-measure chart — measures=%v, groupBy=%v", spec.Measures, spec.GroupBy)
+
+	chartConfig := BuildMultiMeasureChart(spec, filtered, spec.Measures)
+	if chartConfig == nil {
+		return &Result{
+			Success: true,
+			Type:    "text",
+			Reply:   "Not enough data to generate a comparison chart.",
+		}, nil
+	}
+
+	measureLabels := make([]string, len(spec.Measures))
+	for i, m := range spec.Measures {
+		measureLabels[i] = LabelForDimension(m)
+	}
+
+	return &Result{
+		Success:     true,
+		Type:        "chart",
+		ChartConfig: chartConfig,
+		Reply:       fmt.Sprintf("Comparing %s.", strings.Join(measureLabels, " vs ")),
+	}, nil
 }
 
 // ============================================================================

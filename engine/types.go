@@ -34,7 +34,8 @@ type QuerySpec struct {
 	Filters        Filters  `json:"filters"`                  // Which records to include
 	CompareFilters *Filters `json:"compareFilters,omitempty"` // For ratio: numerator filters
 	Aggregation    string   `json:"aggregation"`              // "sum", "count", "avg", "max", "min", "list", "growth", "ratio", "none"
-	Measure        string   `json:"measure"`                  // Which measure to aggregate (empty → use default)
+	Measure        string   `json:"measure"`                  // Single measure (used when Measures is empty)
+	Measures       []string `json:"measures,omitempty"`       // Multiple measures for comparison charts (one series per measure)
 	GroupBy        []string `json:"groupBy"`                  // Dimension keys: ["month"], ["category", "location"]
 	SortBy         string   `json:"sortBy"`                   // "value_desc", "value_asc", "date_asc", "date_desc", "alpha_asc"
 	Limit          int      `json:"limit"`                    // 0 = all

@@ -9,13 +9,21 @@ npm/wasm_exec.js
 .DS_Store
 Thumbs.db
 
-# IDE
-.idea/
-.vscode/
-*.swp
-
 #zip
 *.zip
 
 #csv
 *.csv
+
+# Compiled binaries
+/bin/spektr
+/bin/spektr-linux
+/bin/spektr.exe
+/bin/spektr.wasm
+
+# WASM builds
+/npm/spektr.wasm
+/spektr-extension/spektr.wasm
+
+# Extension zips
+*.zip
