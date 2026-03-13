@@ -26,7 +26,334 @@ Most analytics libraries are tightly coupled to their domain. Spektr isn't. It o
 
 Any dataset that has these two things works with Spektr. No schema migration, no ETL pipeline, no database required.
 
-## CLI — The Fastest Way to Use Spektr
+## Architecture
+
+Spektr is a **library that defines REST-shaped interfaces**. It never runs a server. Every function accepts a formally typed Request, returns a formally typed Response, and is JSON-serializable by contract. Transport is the consumer's concern entirely.
+
+```
+Spektr library (api/ package)
+└── Functions with formally defined Request/Response types
+     that are JSON-serializable by contract
+
+Consumer's transport (their choice)
+├── Lambda handler     → JSON event in, JSON out → calls api.Pipeline()
+├── HTTP wrapper       → HTTP request  → calls api.Execute()  → HTTP response
+├── WASM bridge        → JS calls function directly (already works)
+├── Python / any lang  → HTTP POST + JSON → calls any deployed endpoint
+├── Apps Script        → calls via HTTP wrapper → api.Translate()
+├── Chrome extension   → WASM bridge → api.Discover()
+└── CLI binary         → flag parsing → api.Pipeline() → stdout
+```
+
+The consumer's wrapper is 5-10 lines per endpoint — just parsing and serialization. Spektr does zero transport work.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                     CONSUMER'S TRANSPORT                          │
+│         (Lambda, HTTP mux, WASM bridge, Apps Script)              │
+├───────────────────────────────────────────────────────────────────┤
+│                     api/ — PUBLIC INTERFACE                        │
+│                                                                   │
+│  Health()     Discover()     Refine()      Parse()                │
+│  Translate()  Execute()      Pipeline()                           │
+│                                                                   │
+│  Typed Request/Response structs (contract.go)                     │
+│  Response envelope: { ok, data, error }                           │
+├──────────┬──────────────┬──────────────┬─────────────────────────┤
+│  engine  │  translator  │   schema     │  helpers                 │
+│          │              │              │                          │
+│  Query → │  NL → Query  │  Auto-Detect │  CSV parsing             │
+│  Result  │  (Gemini,    │  (heuristic) │                          │
+│  (local, │   OpenAI)    │              │                          │
+│   no AI) │              │  Smart Refine│                          │
+│          │              │  (one-time   │                          │
+│  zero    │  bring your  │   AI enrich) │                          │
+│  deps    │  own LLM     │              │                          │
+└──────────┴──────────────┴──────────────┴─────────────────────────┘
+              INTERNAL PACKAGES — not imported by consumers
+```
+
+Full interactive API documentation: **[Swagger UI](https://petstore.swagger.io/?url=https://raw.githubusercontent.com/spektr-org/spektr/main/Docs/swagger.yaml)** — opens in browser. OpenAPI 3.0 spec: **[`Docs/swagger.yaml`](Docs/swagger.yaml)**.
+
+## Installation
+
+### As a Go library
+
+```bash
+go get github.com/spektr-org/spektr
+```
+
+Requires Go 1.21+. Consumers import only the `api` package:
+
+```go
+import "github.com/spektr-org/spektr/api"
+```
+
+### As a CLI binary
+
+```bash
+git clone https://github.com/spektr-org/spektr
+cd spektr
+go build -o ./bin/spektr ./cmd/spektr/
+```
+
+### As an npm package
+
+```bash
+npm install @spektr/engine
+```
+
+### Build all targets
+
+```bash
+make build      # CLI binary → bin/spektr
+make wasm       # WASM binary → bin/spektr.wasm
+make npm        # Copy WASM + wasm_exec.js into npm/
+make test       # Run Go tests
+make test-npm   # Run Node.js WASM test
+make all        # Everything
+```
+
+## Quick Start
+
+### Option 1: One-Shot Pipeline (CSV → Question → Answer)
+
+The simplest way to use Spektr. One function call, CSV in, result out.
+
+```go
+package main
+
+import (
+    "fmt"
+    "github.com/spektr-org/spektr/api"
+)
+
+func main() {
+    csv := `Category,Field,Month,Amount
+Expense,Rent,Jan-2026,2500
+Expense,Groceries,Jan-2026,800
+Income,Salary,Jan-2026,8000`
+
+    // One call — discovers schema, parses records, builds query, executes
+    resp := api.Pipeline(api.PipelineRequest{
+        CSV:   csv,
+        Query: "sum amount by field",
+        Mode:  api.PipelineModeLocal,
+    })
+
+    if !resp.OK {
+        panic(resp.Error)
+    }
+
+    fmt.Println("Reply:", resp.Data.Result.Reply)
+    fmt.Println("Type:", resp.Data.Result.Type)
+    // ChartConfig, TableData available on resp.Data.Result
+}
+```
+
+### Option 2: Pipeline with Natural Language (AI Mode)
+
+Ask questions in plain English. Requires a Gemini or OpenAI API key.
+
+```go
+resp := api.Pipeline(api.PipelineRequest{
+    CSV:    csv,
+    Query:  "how much did I spend on rent compared to groceries?",
+    Mode:   api.PipelineModeAI,
+    APIKey: "AIza...",
+    Model:  "gemini-2.5-flash",
+})
+
+if resp.OK {
+    fmt.Println(resp.Data.Result.Reply)
+    // "You spent 2,500.00 on Rent and 800.00 on Groceries."
+}
+```
+
+### Option 3: Step-by-Step (Cache Schema, Reuse Across Queries)
+
+For applications that run multiple queries against the same dataset, use the individual functions to avoid re-discovering the schema on every call.
+
+```go
+// Step 1: Discover schema (once per dataset shape)
+discoverResp := api.Discover(api.DiscoverRequest{
+    CSV:  csv,
+    Name: "Monthly Budget",
+})
+schema := discoverResp.Data
+
+// Step 2: Optionally enrich with AI (once, cache the result)
+refineResp := api.Refine(api.RefineRequest{
+    Schema: *schema,
+    APIKey: "AIza...",
+})
+if refineResp.OK {
+    schema = refineResp.Data
+}
+
+// Step 3: Parse records (once per dataset)
+parseResp := api.Parse(api.ParseRequest{
+    CSV:    csv,
+    Schema: *schema,
+})
+records := parseResp.Data.Records
+
+// Step 4: Translate natural language → QuerySpec (per query)
+summary := api.SummaryFromRecords(records, *schema)
+translateResp := api.Translate(api.TranslateRequest{
+    Query:   "show expenses by category",
+    Schema:  *schema,
+    Summary: api.DataSummary{RecordCount: summary.RecordCount, Dimensions: summary.Dimensions},
+    APIKey:  "AIza...",
+})
+spec := translateResp.Data.QuerySpec
+
+// Step 5: Execute (per query — pure local computation, no AI)
+executeResp := api.Execute(api.ExecuteRequest{
+    Spec:    spec,
+    Records: records,
+})
+
+fmt.Println(executeResp.Data.Reply)
+fmt.Println(executeResp.Data.ChartConfig) // render-ready chart JSON
+```
+
+### Option 4: CLI — No Go Code Needed
+
+```bash
+export GEMINI_API_KEY=your-key
+spektr --file sales.csv --query "revenue by region" --format csv --out results.csv
+```
+
+## API Contract
+
+Every function in the `api/` package maps to one REST endpoint by design. All types are exported, JSON-tagged, and documented. Any consumer — regardless of transport — imports these same types.
+
+### Endpoints
+
+| Endpoint | Function | AI Call | Description |
+|----------|----------|--------|-------------|
+| `GET /health` | `api.Health()` | No | Version and readiness status |
+| `POST /discover` | `api.Discover(req)` | No | CSV → schema (heuristic classification) |
+| `POST /refine` | `api.Refine(req)` | Yes | Schema → enriched schema (one-time AI call) |
+| `POST /parse` | `api.Parse(req)` | No | CSV + schema → `[]Record` |
+| `POST /translate` | `api.Translate(req)` | Yes | Natural language → QuerySpec |
+| `POST /execute` | `api.Execute(req)` | No | QuerySpec + records → Result |
+| `POST /pipeline` | `api.Pipeline(req)` | Optional | One-shot: CSV + query → Result |
+
+### Response Envelope
+
+All responses use a generic envelope. `ok: true` → `data` is populated. `ok: false` → `error` is populated.
+
+```go
+type Response[T any] struct {
+    OK    bool   `json:"ok"`
+    Data  *T     `json:"data,omitempty"`
+    Error string `json:"error,omitempty"`
+}
+```
+
+### Consumer Transport Examples
+
+The same `api.` functions work identically across all transports. The consumer's wrapper is 5-10 lines:
+
+**AWS Lambda:**
+
+```go
+func handler(event events.APIGatewayRequest) (events.APIGatewayResponse, error) {
+    var req api.PipelineRequest
+    json.Unmarshal([]byte(event.Body), &req)
+    resp := api.Pipeline(req)
+    body, _ := json.Marshal(resp)
+    return events.APIGatewayResponse{StatusCode: 200, Body: string(body)}, nil
+}
+```
+
+**HTTP mux:**
+
+```go
+http.HandleFunc("/pipeline", func(w http.ResponseWriter, r *http.Request) {
+    var req api.PipelineRequest
+    json.NewDecoder(r.Body).Decode(&req)
+    resp := api.Pipeline(req)
+    json.NewEncoder(w).Encode(resp)
+})
+```
+
+**WASM (already works):**
+
+```javascript
+const spektr = require('@spektr/engine');
+await spektr.init();
+const result = spektr.discover(csvString);  // same contract, JS bridge
+```
+
+**Python (calls any deployed Spektr endpoint):**
+
+```python
+import requests, json
+
+SPEKTR_URL = "https://your-lambda-id.lambda-url.region.on.aws"
+
+# One-shot pipeline — same contract as api.Pipeline()
+resp = requests.post(f"{SPEKTR_URL}/pipeline", json={
+    "csv": open("jira-export.csv").read(),
+    "query": "show bugs by priority",
+    "mode": "ai",
+    "apiKey": "AIza..."
+}).json()
+
+if resp["ok"]:
+    result = resp["data"]["result"]
+    print(result["reply"])                    # "There are 12 bugs..."
+    print(json.dumps(result["chartConfig"]))  # render-ready chart JSON
+
+# Step-by-step — cache schema, run multiple queries
+schema_resp = requests.post(f"{SPEKTR_URL}/discover", json={
+    "csv": csv_content,
+    "name": "Sprint Export"
+}).json()
+schema = schema_resp["data"]
+
+parse_resp = requests.post(f"{SPEKTR_URL}/parse", json={
+    "csv": csv_content,
+    "schema": schema
+}).json()
+records = parse_resp["data"]["records"]
+
+# Run multiple queries against cached records
+for query in ["bugs by priority", "story points by assignee", "velocity by sprint"]:
+    exec_resp = requests.post(f"{SPEKTR_URL}/translate", json={
+        "query": query,
+        "schema": schema,
+        "summary": {"recordCount": len(records), "dimensions": {}},
+        "apiKey": "AIza..."
+    }).json()
+
+    result = requests.post(f"{SPEKTR_URL}/execute", json={
+        "spec": exec_resp["data"]["querySpec"],
+        "records": records
+    }).json()
+
+    print(f"{query}: {result['data']['reply']}")
+```
+
+The JSON contract is identical across Go, JavaScript, and Python. No SDK needed — just HTTP + JSON.
+
+One endpoint, unlimited domains:
+
+```
+┌─────────────────┐
+│ Jira Sheet      │──┐
+└─────────────────┘  │
+┌─────────────────┐  │    ┌──────────────────┐
+│ FinOps Sheet    │──┼───→│  Single Lambda    │──→ Gemini API
+└─────────────────┘  │    │  (stateless)      │    (query → QuerySpec)
+┌─────────────────┐  │    └──────────────────┘
+│ Python script   │──┘
+```
+
+## CLI — The Fastest Way to Try Spektr
 
 Build once, use on any CSV:
 
@@ -88,30 +415,6 @@ chmod +x spektr-analyze.sh
 | `--schema` | Pre-built schema JSON (skips auto-detect) | — |
 | `--model` | Gemini model name | `gemini-2.5-flash` |
 
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        YOUR APPLICATION                           │
-├──────────┬──────────────┬──────────────┬─────────────────────────┤
-│   CLI    │  Translator  │    Engine    │     Schema               │
-│          │              │              │                          │
-│  CSV →   │  NL → Query  │  Query →     │  Auto-Detect             │
-│  Query → │  (Gemini,    │  Result      │  (heuristics)            │
-│  CSV out │   OpenAI)    │  (local,     │                          │
-│          │              │   no AI)     │  Smart Refine            │
-│          │  Optional —  │  ← Core ──→ │  (one-time AI            │
-│          │  bring your  │  zero deps   │   enrichment)            │
-│          │  own LLM     │  WASM-safe   │                          │
-└──────┬───┴──────────────┴──────────────┴─────────────────────────┘
-       │
-       ├──→  Go binary (CLI, Lambda)
-       ├──→  WASM (browser, Node.js, Chrome extension)
-       └──→  npm package (@spektr/engine)
-```
-
-The engine has **zero external dependencies** and never calls any AI service. All computation is local. This makes it safe for WASM compilation, privacy-sensitive environments, and browser-side execution.
-
 ## Schema Discovery
 
 Spektr can figure out your data shape automatically — no manual schema definition needed.
@@ -120,8 +423,12 @@ Spektr can figure out your data shape automatically — no manual schema definit
 
 Analyzes CSV headers and values to classify columns:
 
-```bash
-spektr --file jira-export.csv --discover --format pretty
+```go
+resp := api.Discover(api.DiscoverRequest{
+    CSV:  csvContent,
+    Name: "Jira Sprint Export",
+})
+schema := resp.Data
 ```
 
 Auto-Detect handles: string dimensions, numeric measures, date/temporal detection, currency code recognition, hierarchy detection (e.g. sub_category → category), high-cardinality ID column skipping, and synthetic `record_count` measure injection.
@@ -140,8 +447,15 @@ Auto-Detect handles: string dimensions, numeric measures, date/temporal detectio
 
 Optionally sends ~500 bytes of column metadata to Gemini for enrichment — display names, descriptions, sort hints, unit corrections, hierarchy suggestions:
 
-```bash
-spektr --file jira-export.csv --discover --refine --format pretty
+```go
+resp := api.Refine(api.RefineRequest{
+    Schema: discoveredSchema,
+    APIKey: "AIza...",
+    Model:  "gemini-2.5-flash-lite",  // optional
+})
+if resp.OK {
+    enrichedSchema = resp.Data  // cache this — don't call Refine on every request
+}
 ```
 
 **Privacy guarantee:** Gemini only sees column names and sample values. Never raw data, never actual amounts. Smart Refine is called once at setup — cache the result and reuse.
@@ -158,324 +472,78 @@ Auto-Detect has been validated with test suites across three distinct domains:
 | **E-commerce** (retail orders) | 9 | 6 | 1 | ✅ multi-currency | sub_category→category |
 | **HR** (employee data) | 7 | 4 | 2 | — | — |
 
-## WASM + npm — Use Spektr in JavaScript
-
-Spektr compiles to WebAssembly and ships as an npm package. The same engine that runs in the CLI runs in Node.js and the browser.
-
-```bash
-npm install @spektr/engine
-```
-
-```javascript
-const spektr = require('@spektr/engine');
-
-await spektr.init();                                    // Load WASM (once)
-
-spektr.discover(csvString)                               // CSV → Schema
-spektr.refine(schema, apiKey, model?)                    // Schema → Enriched Schema
-spektr.parseCSV(csvString, schema)                       // CSV + Schema → Records
-spektr.execute(querySpec, records, options?)              // QuerySpec + Records → Result
-spektr.translate(query, schema, summary, apiKey, model?) // NL → QuerySpec (via Gemini)
-spektr.version()                                         // "0.2.0"
-```
-
-All functions return `{ ok: true, data: ... }` or `{ ok: false, error: "..." }`.
-
-Full TypeScript definitions included (`index.d.ts`).
-
-## Browser Demo + Chrome Extension
-
-Spektr includes a standalone browser demo (`npm/demo.html`) and a Chrome extension (`spektr-extension/`), both powered by the WASM binary. The browser demo lets you drop a CSV, type a query, and see results — no server, no signup, no data leaving your browser. The Chrome extension provides a popup interface for quick analysis of CSV data from any page.
-
-## Installation
-
-### As a Go library
-
-```bash
-go get github.com/spektr-org/spektr
-```
-
-Requires Go 1.21+.
-
-### As a CLI binary
-
-```bash
-git clone https://github.com/spektr-org/spektr
-cd spektr
-go build -o ./bin/spektr ./cmd/spektr/
-```
-
-### As an npm package
-
-```bash
-npm install @spektr/engine
-```
-
-### Build all targets
-
-```bash
-make build      # CLI binary → bin/spektr
-make wasm       # WASM binary → bin/spektr.wasm
-make npm        # Copy WASM + wasm_exec.js into npm/
-make test       # Run Go tests
-make test-npm   # Run Node.js WASM test
-make all        # Everything
-```
-
-## Quick Start
-
-### Option 1: With `[]Record` (ad-hoc / CSV data)
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/spektr-org/spektr/engine"
-)
-
-func main() {
-    // Your data as generic records
-    records := []engine.Record{
-        {
-            Dimensions: map[string]string{"category": "Expense", "field": "Rent", "month": "Jan-2026"},
-            Measures:   map[string]float64{"amount": 2500},
-        },
-        {
-            Dimensions: map[string]string{"category": "Expense", "field": "Groceries", "month": "Jan-2026"},
-            Measures:   map[string]float64{"amount": 800},
-        },
-        {
-            Dimensions: map[string]string{"category": "Income", "field": "Salary", "month": "Jan-2026"},
-            Measures:   map[string]float64{"amount": 8000},
-        },
-    }
-
-    // Wrap in a view
-    view := engine.NewSliceView(records)
-
-    // Define what to compute
-    spec := engine.QuerySpec{
-        Intent:      "chart",
-        Filters:     engine.Filters{Dimensions: map[string][]string{"category": {"Expense"}}},
-        GroupBy:     []string{"field"},
-        Aggregation: "sum",
-        Visualize:   "bar",
-        Reply:       "You spent {total} across {count} transactions.",
-    }
-
-    // Execute
-    result, err := engine.Execute(spec, view, engine.WithDefaultMeasure("amount"))
-    if err != nil {
-        panic(err)
-    }
-
-    fmt.Println("Type:", result.Type)           // "chart"
-    fmt.Println("Reply:", result.Reply)          // "You spent SGD 3,300.00 across 2 transactions."
-    fmt.Println("Chart:", result.ChartConfig)    // Bar chart with Rent=2500, Groceries=800
-}
-```
-
-### Option 2: With `DomainAdapter` (zero-copy typed structs)
-
-This is the recommended approach for applications. Your data stays in its original struct — no maps, no conversion, no allocation overhead.
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/spektr-org/spektr/engine"
-)
-
-// Your existing domain type — no changes needed
-type Transaction struct {
-    CategoryName string
-    FieldName    string
-    LocationName string
-    Month        string
-    Currency     string
-    Amount       float64
-}
-
-// Declare once at init — tells Spektr how to read your struct
-var adapter = engine.NewDomainAdapter[Transaction]().
-    Dimension("category", func(t Transaction) string { return t.CategoryName }).
-    Dimension("field",    func(t Transaction) string { return t.FieldName }).
-    Dimension("location", func(t Transaction) string { return t.LocationName }).
-    Dimension("month",    func(t Transaction) string { return t.Month }).
-    Dimension("currency", func(t Transaction) string { return t.Currency }).
-    Measure("amount",     func(t Transaction) float64 { return t.Amount })
-
-func main() {
-    transactions := []Transaction{
-        {"Expense", "Rent", "Singapore", "Jan-2026", "SGD", 2500},
-        {"Expense", "Groceries", "Singapore", "Jan-2026", "SGD", 800},
-        {"Income", "Salary", "Singapore", "Jan-2026", "SGD", 8000},
-    }
-
-    // Bind — O(1), zero copy. Spektr reads your struct fields directly.
-    view := adapter.Bind(transactions)
-
-    spec := engine.QuerySpec{
-        Intent:      "text",
-        Filters:     engine.Filters{Dimensions: map[string][]string{"category": {"Expense"}}},
-        Aggregation: "sum",
-        Reply:       "Total expenses: {total}",
-    }
-
-    result, _ := engine.Execute(spec, view, engine.WithDefaultMeasure("amount"))
-    fmt.Println(result.Reply) // "Total expenses: SGD 3,300.00"
-}
-```
-
-### Option 3: CSV → Query → CSV (no code)
-
-The simplest path — no Go code needed:
-
-```bash
-export GEMINI_API_KEY=your-key
-spektr --file sales.csv --query "revenue by region" --format csv --out results.csv
-```
-
 ## Domain Examples
 
-### Personal Finance
-
-```go
-var financeAdapter = engine.NewDomainAdapter[Transaction]().
-    Dimension("category", func(t Transaction) string { return t.CategoryName }).
-    Dimension("field",    func(t Transaction) string { return t.FieldName }).
-    Dimension("location", func(t Transaction) string { return t.LocationName }).
-    Dimension("month",    func(t Transaction) string { return t.Month }).
-    Dimension("currency", func(t Transaction) string { return t.Currency }).
-    Measure("amount",     func(t Transaction) float64 { return t.Amount })
-
-// "How much did I spend on rent in Singapore?"
-// "Show income vs expenses by month"
-// "What percentage of salary was transferred to India?"
-```
+Spektr is domain-agnostic. The same `api.Pipeline()` call works on any CSV — just change the file and query.
 
 ### Jira / Project Management
 
 ```go
-type JiraIssue struct {
-    Key        string
-    Status     string
-    Priority   string
-    Assignee   string
-    Component  string
-    Sprint     string
-    IssueType  string
-    Created    string  // "Jan-2026"
-    Points     float64
-    TimeSpent  float64 // hours
-}
-
-var jiraAdapter = engine.NewDomainAdapter[JiraIssue]().
-    Dimension("status",    func(j JiraIssue) string { return j.Status }).
-    Dimension("priority",  func(j JiraIssue) string { return j.Priority }).
-    Dimension("assignee",  func(j JiraIssue) string { return j.Assignee }).
-    Dimension("component", func(j JiraIssue) string { return j.Component }).
-    Dimension("sprint",    func(j JiraIssue) string { return j.Sprint }).
-    Dimension("type",      func(j JiraIssue) string { return j.IssueType }).
-    Dimension("month",     func(j JiraIssue) string { return j.Created }).
-    Measure("story_points",     func(j JiraIssue) float64 { return j.Points }).
-    Measure("time_spent_hours", func(j JiraIssue) float64 { return j.TimeSpent })
-
-// "Show story points by assignee"
-// "Average time spent per priority level"
-// "Sprint velocity trend by month"
-// "What percentage of bugs are critical?"
+resp := api.Pipeline(api.PipelineRequest{
+    CSV:    jiraCSV,
+    Query:  "show story points by assignee",
+    Mode:   api.PipelineModeAI,
+    APIKey: "AIza...",
+})
+// Also works: "average time spent per priority level"
+//             "sprint velocity trend by month"
+//             "what percentage of bugs are critical?"
 ```
 
 ### Security Operations (SOAR / SIEM)
 
 ```go
-type Incident struct {
-    ID              string
-    Severity        string  // Critical, High, Medium, Low
-    Status          string  // Open, In Progress, Resolved, Closed
-    Assignee        string
-    IncidentType    string  // Phishing, Malware, Data Leak, Brute Force
-    Source          string  // SIEM, Email, Endpoint, User Report
-    Month           string
-    ResponseMinutes float64
-    SLAHours        float64
-    RiskScore       float64
-}
+resp := api.Pipeline(api.PipelineRequest{
+    CSV:    soarCSV,
+    Query:  "average response time by severity",
+    Mode:   api.PipelineModeAI,
+    APIKey: "AIza...",
+})
+// Also works: "show incident trend by month"
+//             "which assignee handles the most critical incidents?"
+//             "what percentage of incidents breached SLA?"
+```
 
-var soarAdapter = engine.NewDomainAdapter[Incident]().
-    Dimension("severity", func(i Incident) string { return i.Severity }).
-    Dimension("status",   func(i Incident) string { return i.Status }).
-    Dimension("assignee", func(i Incident) string { return i.Assignee }).
-    Dimension("type",     func(i Incident) string { return i.IncidentType }).
-    Dimension("source",   func(i Incident) string { return i.Source }).
-    Dimension("month",    func(i Incident) string { return i.Month }).
-    Measure("response_min", func(i Incident) float64 { return i.ResponseMinutes }).
-    Measure("sla_hours",    func(i Incident) float64 { return i.SLAHours }).
-    Measure("risk_score",   func(i Incident) float64 { return i.RiskScore })
+### FinOps / Cloud Cost
 
-// "Average response time by severity"
-// "Show incident trend by month"
-// "Which assignee handles the most critical incidents?"
-// "What percentage of incidents breached SLA?"
+```go
+resp := api.Pipeline(api.PipelineRequest{
+    CSV:    awsCostCSV,
+    Query:  "spend by service this month",
+    Mode:   api.PipelineModeAI,
+    APIKey: "AIza...",
+})
 ```
 
 ### HR / People Analytics
 
 ```go
-type Employee struct {
-    Department string
-    Level      string
-    Location   string
-    Gender     string
-    JoinMonth  string
-    Salary     float64
-    Tenure     float64 // years
-}
-
-var hrAdapter = engine.NewDomainAdapter[Employee]().
-    Dimension("department", func(e Employee) string { return e.Department }).
-    Dimension("level",      func(e Employee) string { return e.Level }).
-    Dimension("location",   func(e Employee) string { return e.Location }).
-    Dimension("gender",     func(e Employee) string { return e.Gender }).
-    Dimension("month",      func(e Employee) string { return e.JoinMonth }).
-    Measure("salary",       func(e Employee) float64 { return e.Salary }).
-    Measure("tenure_years", func(e Employee) float64 { return e.Tenure })
-
-// "Average salary by department"
-// "Headcount by location"
-// "Show hiring trend by month"
+resp := api.Pipeline(api.PipelineRequest{
+    CSV:    hrCSV,
+    Query:  "average salary by department",
+    Mode:   api.PipelineModeAI,
+    APIKey: "AIza...",
+})
+// Also works: "headcount by location"
+//             "show hiring trend by month"
 ```
 
-## Core Concepts
-
-### RecordView — Zero-Copy Data Access
-
-The engine never owns your data. It reads through the `RecordView` interface:
+### Personal Finance
 
 ```go
-type RecordView interface {
-    Len() int
-    Dimension(index int, key string) string
-    Measure(index int, key string) float64
-    DimensionKeys() []string
-    MeasureKeys() []string
-}
+resp := api.Pipeline(api.PipelineRequest{
+    CSV:    bankCSV,
+    Query:  "how much did I spend on rent in Singapore?",
+    Mode:   api.PipelineModeAI,
+    APIKey: "AIza...",
+})
+// Also works: "show income vs expenses by month"
+//             "what percentage of salary was transferred to India?"
 ```
 
-Five implementations ship with Spektr:
+## Core Types
 
-| View | Purpose | Allocates? |
-|------|---------|-----------|
-| `SliceView` | Wraps `[]Record` (CSV, ad-hoc) | No — holds reference |
-| `DomainView[T]` | Reads typed structs via accessor functions | No — reads fields directly |
-| `SubView` | Filtered subset (indices into parent) | No — just index list |
-| `CurrencyView` | Normalizes currency on read | No — converts per call |
-| `ConcatView` | Virtual join of two views | No — delegates reads |
-
-The entire filter → group → aggregate pipeline works through this interface. Filtering returns a `SubView` (index list), currency normalization wraps in a `CurrencyView`, ratio queries use `ConcatView` for period derivation — all zero-copy.
+These types are defined in the `engine` package and referenced by the `api` contract. Consumers interact with them through `api.ExecuteRequest`, `api.TranslateResult`, and `api.PipelineResult`.
 
 ### QuerySpec — What to Compute
 
@@ -496,7 +564,7 @@ type QuerySpec struct {
 }
 ```
 
-QuerySpec can be built manually, from a UI, or generated by the AI translator from natural language.
+QuerySpec is produced by `api.Translate()` or built manually. It is consumed by `api.Execute()`.
 
 ### Filters — Dimension-Based Selection
 
@@ -529,7 +597,27 @@ type Result struct {
 }
 ```
 
-The result is designed to be serialized as JSON and consumed directly by frontend chart libraries (Recharts, Chart.js, etc.) or rendered into spreadsheets.
+Result is returned by `api.Execute()` and `api.Pipeline()`. Designed to be serialized as JSON and consumed directly by frontend chart libraries (Recharts, Chart.js, etc.) or rendered into spreadsheets.
+
+### ExecuteOptions — Currency and Measure Configuration
+
+```go
+resp := api.Execute(api.ExecuteRequest{
+    Spec:    spec,
+    Records: records,
+    Options: &api.ExecuteOptions{
+        DefaultMeasure:    "amount",
+        BaseCurrency:      "SGD",
+        CurrencyDimension: "currency",
+        ExchangeRates: map[string]float64{
+            "INR": 0.016,
+            "USD": 1.35,
+        },
+    },
+})
+```
+
+When records span multiple currencies, the engine wraps records in a currency-normalizing view that converts on read — no data copy. Single-currency queries display in the source currency untouched.
 
 ## Features
 
@@ -545,22 +633,6 @@ The result is designed to be serialized as JSON and consumed directly by fronten
 | `list` | No aggregation, row per record | "Show all transactions" |
 | `growth` | Change from earliest to latest period | "Has my salary increased?" |
 | `ratio` | Percentage comparison between two sets | "What % of salary was transferred?" |
-
-### Multi-Currency Normalization
-
-```go
-rates := map[string]float64{
-    "INR": 0.016,  // 1 INR = 0.016 SGD
-    "USD": 1.35,   // 1 USD = 1.35 SGD
-}
-
-result, err := engine.Execute(spec, view,
-    engine.WithDefaultMeasure("amount"),
-    engine.WithCurrency("SGD", "currency", rates),
-)
-```
-
-When records span multiple currencies, Spektr wraps the view in a `CurrencyView` that converts on read — no data copy. Single-currency queries display in the source currency untouched.
 
 ### Reply Templates
 
@@ -594,285 +666,34 @@ Available placeholders:
 
 Unresolved placeholders are automatically stripped from the output.
 
-### Growth Analysis
+## WASM + npm — Use Spektr in JavaScript
 
-```go
-spec := engine.QuerySpec{
-    Intent:      "text",
-    Filters:     engine.Filters{Dimensions: map[string][]string{"field": {"Salary"}}},
-    Aggregation: "growth",
-    Reply:       "Your salary has {direction} by {growth_percent} — from {earliest_value} to {latest_value}.",
-}
+Spektr compiles to WebAssembly and ships as an npm package. The same engine that runs in the CLI runs in Node.js and the browser.
+
+```bash
+npm install @spektr/engine
 ```
 
-Groups records by month, compares earliest vs latest period. Returns direction, change amount, and percentage. Requires at least 2 months of data.
+```javascript
+const spektr = require('@spektr/engine');
 
-### Ratio Queries
+await spektr.init();                                    // Load WASM (once)
 
-```go
-spec := engine.QuerySpec{
-    Intent:      "text",
-    Aggregation: "ratio",
-    Filters:     engine.Filters{Dimensions: map[string][]string{"field": {"Salary"}}},         // Denominator
-    CompareFilters: &engine.Filters{Dimensions: map[string][]string{"field": {"ToIndia"}}},     // Numerator
-    Reply:       "You transferred {ratio_percent} of your salary ({numerator_total} out of {denominator_total}).",
-}
-// → "You transferred 18.2% of your salary (SGD 3,000.00 out of SGD 16,500.00)."
+spektr.discover(csvString)                               // CSV → Schema
+spektr.refine(schema, apiKey, model?)                    // Schema → Enriched Schema
+spektr.parseCSV(csvString, schema)                       // CSV + Schema → Records
+spektr.execute(querySpec, records, options?)              // QuerySpec + Records → Result
+spektr.translate(query, schema, summary, apiKey, model?) // NL → QuerySpec (via Gemini)
+spektr.version()                                         // "1.0.0"
 ```
 
-### QuerySpec Normalization
+All functions return `{ ok: true, data: ... }` or `{ ok: false, error: "..." }` — the same envelope contract as the Go `api/` package.
 
-AI translators are non-deterministic. `NormalizeQuerySpec` applies deterministic rules to fix common inconsistencies before execution:
+Full TypeScript definitions included (`index.d.ts`).
 
-```go
-spec = engine.NormalizeQuerySpec(spec)
-result, err := engine.Execute(spec, view)
-```
+## Browser Demo + Chrome Extension
 
-Rules applied:
-- `aggregation: "list"` forces `intent: "table"`
-- `intent: "chart"` with no `groupBy` falls back to `intent: "text"`
-- `aggregation: "max"/"min"` with no `groupBy` forces `intent: "text"`
-
-## Package Structure
-
-```
-spektr/
-├── api/                     # HTTP API contract for consumers
-│   ├── api.go                   # HTTP handlers (query endpoint, discover endpoint)
-│   └── contract.go              # Request/response types for API consumers
-│
-├── cmd/
-│   ├── spektr/
-│   │   └── main.go          # CLI binary (v0.2.0)
-│   └── wasm/
-│       └── main.go          # WASM entry point (syscall/js bridge)
-│
-├── engine/                  # Core computation — zero dependencies
-│   ├── view.go                  # RecordView interface + all implementations
-│   ├── types.go                 # QuerySpec, Result, Group, Chart/Table/Text types
-│   ├── filters.go               # Dimension-based filtering → SubView
-│   ├── aggregators.go           # Grouping, aggregation, sorting, formatting
-│   ├── executor.go              # Main pipeline: Execute() + placeholder resolution
-│   ├── chart_builder.go         # Groups → ChartConfig (including multi-measure)
-│   ├── table_builder.go         # Groups → TableData
-│   ├── text_builder.go          # Groups → TextData (includes growth)
-│   └── options.go               # Functional options: WithCurrency, WithDefaultMeasure
-│
-├── schema/                  # Dataset shape description + discovery
-│   ├── schema.go                # Config, DimensionMeta, MeasureMeta types
-│   ├── discover.go              # Auto-Detect: CSV → schema via heuristics
-│   ├── refine.go                # Smart Refine: one-time Gemini enrichment
-│   ├── discover_test.go         # Auto-Detect test suite
-│   ├── refine_test.go           # Smart Refine test suite (21 tests, all mocked)
-│   └── validate_test.go         # Phase 6 cross-domain validation (Jira, e-commerce, HR)
-│
-├── translator/              # AI boundary (natural language → QuerySpec)
-│   ├── types.go                 # Translator interface, Config
-│   ├── ai.go                    # Common AI service abstraction
-│   ├── prompt.go                # Schema-driven prompt builder
-│   ├── parser.go                # JSON response parser
-│   └── adapters/                # Provider-specific implementations
-│       ├── adapters.go              # Adapter interface + factory
-│       ├── gemini.go                # Google Gemini implementation
-│       └── openai.go                # OpenAI implementation
-│
-├── helpers/                 # Convenience utilities
-│   └── csv.go                   # CSV → []Record / RecordView parser
-│
-├── npm/                     # npm package (@spektr/engine)
-│   ├── package.json             # v0.2.0
-│   ├── index.js                 # JS wrapper over WASM bridge
-│   ├── index.d.ts               # Full TypeScript type definitions
-│   ├── demo.html                # Standalone browser demo (WASM-powered)
-│   └── test.js                  # Node.js integration test
-│
-├── spektr-extension/        # Chrome extension (popup analytics)
-│   ├── manifest.json
-│   ├── popup.html
-│   ├── popup.js
-│   └── icons/
-│
-├── Docs/                    # Documentation
-│   ├── Spektr_API_Reference.docx
-│   ├── spektr-architecture-design-v3.md
-│   └── swagger.yaml             # OpenAPI 3.0 spec (7 endpoints, 29 schemas)
-│
-├── Makefile                 # Build automation (build, wasm, npm, test)
-├── spektr.go                # Package doc
-└── spektr-analyze.sh        # Batch analysis wrapper script
-```
-
-### Dependency Rule
-
-```
-engine              ← has ZERO external dependencies (WASM-safe)
-schema              ← no dependency on engine
-translator          ← depends on engine (QuerySpec) + schema (Config)
-translator/adapters ← implements translator interface (Gemini, OpenAI)
-api                 ← depends on engine + schema + translator + helpers (HTTP layer)
-helpers             ← depends on engine + schema
-cmd/spektr          ← depends on all packages (CLI wiring)
-cmd/wasm            ← depends on all packages (JS bridge via syscall/js)
-npm/                ← wraps cmd/wasm output (no Go dependency at runtime)
-```
-
-## Integration Tiers
-
-### Auto-Detect (CSV / ad-hoc data)
-
-Schema auto-discovered from data. Best for quick analysis and CLI usage.
-
-```go
-import (
-    "github.com/spektr-org/spektr/helpers"
-    "github.com/spektr-org/spektr/schema"
-)
-
-// Auto-discover schema from CSV
-sch, _ := schema.DiscoverFromCSV(csvBytes)
-
-// Optional: enrich with AI (one-time)
-enriched, err := schema.Refine(sch, schema.RefineConfig{APIKey: key, Model: "gemini-2.5-flash"})
-if err != nil {
-    enriched = sch // graceful fallback
-}
-
-// Parse CSV into RecordView
-view, _ := helpers.ParseCSVView(csvBytes, enriched)
-
-// Execute
-result, _ := engine.Execute(spec, view)
-```
-
-### Smart Refine (optional AI enrichment)
-
-Sends ~500 bytes of column metadata to Gemini for one-time enrichment:
-
-```go
-cfg := schema.RefineConfig{
-    APIKey: os.Getenv("GEMINI_API_KEY"),
-    Model:  "gemini-2.5-flash",
-}
-enriched, err := schema.Refine(draft, cfg)
-```
-
-**What Gemini sees:** column names, data types, 5 sample values per column, row count, detected patterns. **What Gemini never sees:** raw data, actual amounts, user content.
-
-**What Gemini returns:** dataset name/description, display names, sort hints, unit corrections, hierarchy suggestions, recovery recommendations for skipped columns.
-
-### Schema-Guided (defined schema, generic records)
-
-You define the schema explicitly. Records are still generic maps.
-
-```go
-sch := schema.Config{
-    Name: "Jira Issues",
-    Dimensions: []schema.DimensionMeta{
-        {Key: "status", DisplayName: "Status", SampleValues: []string{"Open", "In Progress", "Done"}},
-        {Key: "priority", DisplayName: "Priority", SampleValues: []string{"Critical", "High", "Medium", "Low"}},
-    },
-    Measures: []schema.MeasureMeta{
-        {Key: "story_points", DisplayName: "Story Points", DefaultAggregation: "sum"},
-    },
-}
-```
-
-### App-Driven (typed structs via DomainAdapter)
-
-Your application has its own data types and metadata store. Use `DomainAdapter` for zero-copy access.
-
-```go
-// Declare once at init
-var adapter = engine.NewDomainAdapter[YourType]().
-    Dimension("key", func(r YourType) string { return r.SomeField }).
-    Measure("key", func(r YourType) float64 { return r.SomeNumber })
-
-// Bind per request — O(1)
-view := adapter.Bind(yourData)
-result, _ := engine.Execute(spec, view, opts...)
-```
-
-This is what production applications use. The adapter is declared once and reused across all requests.
-
-## AI Translator (Optional)
-
-The translator converts natural language to QuerySpec using an LLM. It needs a schema to build prompts — it never sees raw data. Multiple AI providers are supported through the adapter pattern.
-
-```go
-import (
-    "github.com/spektr-org/spektr/translator"
-    "github.com/spektr-org/spektr/translator/adapters"
-    "github.com/spektr-org/spektr/schema"
-    "github.com/spektr-org/spektr/engine"
-)
-
-// Gemini
-t := adapters.NewGemini(adapters.Config{APIKey: "your-key", Model: "gemini-2.5-flash"})
-
-// OpenAI
-t := adapters.NewOpenAI(adapters.Config{APIKey: "your-key", Model: "gpt-4o"})
-
-// Translate
-result, _ := t.Translate("show spending by category", mySchema)
-
-// Execute
-engineResult, _ := engine.Execute(result.QuerySpec, view)
-```
-
-The translator is optional. You can build QuerySpec manually, from a UI, or use any other AI provider — just produce a valid QuerySpec and hand it to the engine.
-
-## HTTP API (Consumer Integration)
-
-The `api/` package provides stateless functions that map 1:1 to REST endpoints. Each function takes a typed request, returns a typed response inside a generic `Response[T]` envelope (`ok: true` + data, or `ok: false` + error). Transport is the consumer's concern — wrap these in an HTTP mux, Lambda handler, or Apps Script relay.
-
-Full interactive documentation: **[Swagger UI](https://petstore.swagger.io/?url=https://raw.githubusercontent.com/spektr-org/spektr/main/Docs/swagger.yaml)** — opens in browser. OpenAPI 3.0 spec: **[`Docs/swagger.yaml`](Docs/swagger.yaml)**.
-
-### Endpoints
-
-| Endpoint | Function | AI Call | Description |
-|----------|----------|--------|-------------|
-| `GET /health` | `api.Health()` | No | Version and readiness status |
-| `POST /discover` | `api.Discover(req)` | No | CSV → schema (heuristic classification) |
-| `POST /refine` | `api.Refine(req)` | Yes | Schema → enriched schema (one-time AI call) |
-| `POST /parse` | `api.Parse(req)` | No | CSV + schema → `[]Record` |
-| `POST /translate` | `api.Translate(req)` | Yes | Natural language → QuerySpec |
-| `POST /execute` | `api.Execute(req)` | No | QuerySpec + records → Result |
-| `POST /pipeline` | `api.Pipeline(req)` | Optional | One-shot: CSV + query → Result |
-
-### Pipeline — One-Shot Analysis
-
-The Pipeline endpoint composes all steps in a single call. Two modes:
-
-```go
-// Local mode — keyword matching, no AI, no API key
-resp := api.Pipeline(api.PipelineRequest{
-    CSV:   csvContent,
-    Query: "sum duration_seconds by playbook_id",
-    Mode:  api.PipelineModeLocal,
-})
-
-// AI mode — natural language, requires API key
-resp := api.Pipeline(api.PipelineRequest{
-    CSV:    csvContent,
-    Query:  "which playbooks have the highest failure rate",
-    Mode:   api.PipelineModeAI,
-    APIKey: "AIza...",
-})
-```
-
-Stateless by design — every request is self-contained, making it ideal for Lambda deployment where one instance serves unlimited domains.
-
-```
-┌─────────────────┐
-│ Jira Sheet      │──┐
-└─────────────────┘  │
-┌─────────────────┐  │    ┌──────────────────┐
-│ FinOps Sheet    │──┼───→│  Single Endpoint  │──→ Gemini API
-└─────────────────┘  │    │  (stateless)      │    (query → QuerySpec)
-┌─────────────────┐  │    └──────────────────┘
-│ SOAR Sheet      │──┘
-```
+Spektr includes a standalone browser demo (`npm/demo.html`) and a Chrome extension (`spektr-extension/`), both powered by the WASM binary. The browser demo lets you drop a CSV, type a query, and see results — no server, no signup, no data leaving your browser. The Chrome extension provides a popup interface for quick analysis of CSV data from any page.
 
 ## Output Formats
 
@@ -946,6 +767,91 @@ Ready for Google Sheets, Excel, or any spreadsheet. Use `--format csv --out resu
 }
 ```
 
+## Package Structure
+
+```
+spektr/
+├── api/                     # PUBLIC INTERFACE — consumer-facing contract
+│   ├── api.go                   # Typed functions: Discover, Refine, Parse, Translate, Execute, Pipeline
+│   └── contract.go              # Request/Response types — the canonical REST contract
+│
+├── cmd/
+│   ├── spektr/
+│   │   └── main.go          # CLI binary (v0.2.0)
+│   └── wasm/
+│       └── main.go          # WASM entry point (syscall/js bridge)
+│
+├── engine/                  # INTERNAL — core computation, zero dependencies
+│   ├── view.go                  # RecordView interface + all implementations
+│   ├── types.go                 # QuerySpec, Result, Group, Chart/Table/Text types
+│   ├── filters.go               # Dimension-based filtering → SubView
+│   ├── aggregators.go           # Grouping, aggregation, sorting, formatting
+│   ├── executor.go              # Main pipeline: Execute() + placeholder resolution
+│   ├── chart_builder.go         # Groups → ChartConfig (including multi-measure)
+│   ├── table_builder.go         # Groups → TableData
+│   ├── text_builder.go          # Groups → TextData (includes growth)
+│   └── options.go               # Functional options: WithCurrency, WithDefaultMeasure
+│
+├── schema/                  # INTERNAL — dataset shape description + discovery
+│   ├── schema.go                # Config, DimensionMeta, MeasureMeta types
+│   ├── discover.go              # Auto-Detect: CSV → schema via heuristics
+│   ├── refine.go                # Smart Refine: one-time Gemini enrichment
+│   ├── discover_test.go         # Auto-Detect test suite
+│   ├── refine_test.go           # Smart Refine test suite (21 tests, all mocked)
+│   └── validate_test.go         # Phase 6 cross-domain validation (Jira, e-commerce, HR)
+│
+├── translator/              # INTERNAL — AI boundary (natural language → QuerySpec)
+│   ├── types.go                 # Translator interface, Config
+│   ├── ai.go                    # Common AI service abstraction
+│   ├── prompt.go                # Schema-driven prompt builder
+│   ├── parser.go                # JSON response parser
+│   └── adapters/                # Provider-specific implementations
+│       ├── adapters.go              # Adapter interface + factory
+│       ├── gemini.go                # Google Gemini implementation
+│       └── openai.go                # OpenAI implementation
+│
+├── helpers/                 # INTERNAL — convenience utilities
+│   └── csv.go                   # CSV → []Record / RecordView parser
+│
+├── npm/                     # npm package (@spektr/engine)
+│   ├── package.json             # v0.2.0
+│   ├── index.js                 # JS wrapper over WASM bridge
+│   ├── index.d.ts               # Full TypeScript type definitions
+│   ├── demo.html                # Standalone browser demo (WASM-powered)
+│   └── test.js                  # Node.js integration test
+│
+├── spektr-extension/        # Chrome extension (popup analytics)
+│   ├── manifest.json
+│   ├── popup.html
+│   ├── popup.js
+│   └── icons/
+│
+├── Docs/                    # Documentation
+│   ├── Spektr_API_Reference.docx
+│   ├── spektr-architecture-design-v3.md
+│   └── swagger.yaml             # OpenAPI 3.0 spec (7 endpoints, 29 schemas)
+│
+├── Makefile                 # Build automation (build, wasm, npm, test)
+├── spektr.go                # Package doc
+└── spektr-analyze.sh        # Batch analysis wrapper script
+```
+
+### Dependency Rule
+
+```
+api                 ← PUBLIC INTERFACE — the only package consumers import
+                       depends on engine + schema + translator + helpers
+
+engine              ← INTERNAL — zero external dependencies (WASM-safe)
+schema              ← INTERNAL — no dependency on engine
+translator          ← INTERNAL — depends on engine (QuerySpec) + schema (Config)
+translator/adapters ← INTERNAL — implements translator interface (Gemini, OpenAI)
+helpers             ← INTERNAL — depends on engine + schema
+cmd/spektr          ← CLI wrapper — calls api. functions
+cmd/wasm            ← WASM wrapper — calls api. functions via syscall/js
+npm/                ← JS wrapper — wraps WASM output
+```
+
 ## Testing
 
 ```bash
@@ -980,7 +886,7 @@ The test suite includes:
 - [x] Chrome extension (popup analytics on any page)
 - [x] Makefile build automation
 - [x] Multi-measure comparison charts (`BuildMultiMeasureChart`)
-- [x] HTTP API contract (`api/` package — consumer endpoints)
+- [x] Public API contract (`api/` package — typed Request/Response for all functions)
 - [x] Multi-provider translator adapters (`translator/adapters/`)
 - [x] API reference documentation (`Docs/Spektr_API_Reference.docx`)
 - [x] OpenAPI 3.0 / Swagger documentation (`Docs/swagger.yaml`)
