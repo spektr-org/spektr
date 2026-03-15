@@ -1,0 +1,13 @@
+# Example Natural Language Queries
+
+story points by assignee
+story points by sprint
+average story points per sprint
+
+expenses by category
+income vs expenses by month
+total spending
+
+average salary by department
+salary by location
+highest salary by department
