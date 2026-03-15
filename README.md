@@ -28,7 +28,7 @@ Spektr is a **stateless analytics engine** that runs inside the consumer’s env
 
 Each application embeds its own instance of the engine.
 
-![Spektr Architecture](Docs/spektr-architecture.png)
+![Spektr Architecture](Docs/Spektr_architecture.png)
 
 ### Key design principles
 
