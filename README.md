@@ -1,3 +1,299 @@
+
+# Spektr
+
+**Stateless, domain‑agnostic analytics engine for any structured dataset.**
+
+Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries** instantly.
+
+Spektr is not a hosted service and not a SaaS platform.
+
+Each consumer runs **its own private instance of the Spektr engine** inside its own infrastructure.
+
+Examples of consumers:
+
+- The PocketLedger (TPL)
+- Jira dashboards
+- CLI analytics tools
+- AWS Lambda analytics services
+- Google Sheets extensions
+- internal enterprise dashboards
+
+No shared servers. No centralized processing. No vendor lock‑in.
+
+---
+
+## Architecture
+
+Spektr is a **stateless analytics engine** that runs inside the consumer’s environment.
+
+Each application embeds its own instance of the engine.
+
+![Spektr Architecture](Docs/spektr-architecture.png)
+
+### Key design principles
+
+• **Consumer‑owned instances** — every consumer runs Spektr privately  
+• **No central processing** — no shared service or hosted backend  
+• **Stateless execution** — each request is independent  
+• **AI optional** — analytics computation is always deterministic  
+
+Execution pipeline:
+
+```
+Consumer App (TPL, Jira dashboard, CLI, Lambda, Sheets extension)
+        │
+        ▼
+api.Pipeline({ csv, query, mode, apiKey })
+        │
+        ▼
+Spektr api/ package
+        ├── Discover   → schema inference
+        ├── Translate  → NL → QuerySpec (AI optional)
+        └── Execute    → local analytics computation
+        │
+        ▼
+Result
+ ├── ChartConfig
+ ├── TableData
+ └── TextData
+```
+
+
+---
+
+## How Spektr Works Internally
+
+Spektr operates as a **three‑stage analytics pipeline**.
+
+```
+CSV / Dataset
+      │
+      ▼
+Discover
+(schema inference)
+      │
+      ▼
+Translate
+(NL → QuerySpec)
+      │
+      ▼
+Execute
+(local analytics)
+      │
+      ▼
+Result
+(ChartConfig | TableData | TextData)
+```
+
+### 1. Discover — Schema Inference
+
+Spektr automatically determines:
+
+- **Dimensions** → grouping fields (category, status, region)
+- **Measures** → numeric aggregations (amount, revenue, points)
+- **Temporal fields** → time columns for trend analysis
+- **High‑cardinality identifiers** → ignored (emails, IDs)
+
+No schema definition required.
+
+---
+
+### 2. Translate — Natural Language → QuerySpec
+
+User question:
+
+```
+show spending by category
+```
+
+Spektr generates:
+
+```json
+{
+  "intent": "chart",
+  "measure": "amount",
+  "aggregation": "sum",
+  "groupBy": ["category"],
+  "visualize": "bar"
+}
+```
+
+Translation modes:
+
+| Mode | Description |
+|-----|-------------|
+Local | keyword interpretation |
+AI | Gemini / OpenAI translation |
+
+AI is optional.
+
+---
+
+### 3. Execute — Deterministic Analytics
+
+Analytics always run locally.
+
+```
+QuerySpec
+   │
+   ▼
+Group → Aggregate → Sort → Format
+   │
+   ▼
+Result
+```
+
+Output types:
+
+- ChartConfig
+- TableData
+- TextData
+
+
+---
+
+## 30‑Second Quickstart
+
+### 1. Build the CLI
+
+```
+git clone https://github.com/spektr-org/spektr
+cd spektr
+go build -o spektr ./cmd/spektr/
+```
+
+### 2. Run analytics
+
+```
+spektr --file sales.csv --query "revenue by region"
+```
+
+Output:
+
+```
+Region   Revenue
+APAC     120000
+US       95000
+EU       72000
+```
+
+### 3. Generate a chart CSV
+
+```
+spektr --file sales.csv        --query "revenue by region"        --format csv        --out chart.csv
+```
+
+Open `chart.csv` in:
+
+- Google Sheets
+- Excel
+- Tableau
+
+Instant chart.
+
+### Optional AI mode
+
+```
+export GEMINI_API_KEY=your-key
+
+spektr --file sales.csv        --query "which region is growing fastest?"
+```
+
+Spektr translates the query with Gemini but executes analytics locally.
+
+---
+
+## Real Dataset Demo
+
+The same Spektr pipeline works across completely different domains.
+
+### Jira Example
+
+Dataset:
+
+```
+Assignee,Priority,StoryPoints,Sprint
+Alice,P1,8,Sprint‑12
+Bob,P2,3,Sprint‑12
+Alice,P1,13,Sprint‑13
+```
+
+Query:
+
+```
+show story points by assignee
+```
+
+Result:
+
+```
+Alice   21
+Bob      3
+```
+
+---
+
+### Finance Example
+
+Dataset:
+
+```
+Category,Field,Amount,Month
+Expense,Rent,2500,Jan
+Expense,Groceries,800,Jan
+Income,Salary,8000,Jan
+```
+
+Query:
+
+```
+show expenses by category
+```
+
+Result:
+
+```
+Rent        2500
+Groceries    800
+```
+
+---
+
+### HR Example
+
+Dataset:
+
+```
+Department,Salary,Location
+Engineering,120000,Singapore
+Finance,90000,Singapore
+Engineering,130000,London
+```
+
+Query:
+
+```
+average salary by department
+```
+
+Result:
+
+```
+Engineering   125000
+Finance        90000
+```
+
+---
+
+Same engine. Same API. Any dataset.
+
+```
+CSV → Discover → Translate → Execute → Result
+```
+
+
+---
+
 # Spektr
 
 **Domain-agnostic analytics engine. Picolytics for any dataset.**
