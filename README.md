@@ -2,9 +2,6 @@
 # Spektr
 
 **Stateless analytics engine for any structured dataset.**
-
-Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries.
-
 Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries** instantly.
 
 
@@ -30,18 +27,12 @@ No shared servers. No central processing.
 
 Spektr is a **stateless analytics engine** that runs inside the consumer’s environment.
 
-
 ### Key design principles
 
 • **Consumer‑owned instances** — every consumer runs Spektr privately  
 • **No central processing** — no shared service or hosted backend  
 • **Stateless execution** — each request is independent  
 • **AI optional** — analytics computation is always deterministic  
-
-Execution pipeline:
-```
-Dataset → Discover → Translate → Execute → Result
-```
 
 **Discover**  
 Automatically infer schema (dimensions, measures, dates).
