@@ -3,6 +3,8 @@
 
 **Stateless, domain‑agnostic analytics engine for any structured dataset.**
 
+![Spektr Execution pipeline](Docs/spektr_pipeline_animation.gif)
+
 Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries** instantly.
 
 Spektr is not a hosted service and not a SaaS platform.
