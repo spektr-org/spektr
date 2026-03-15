@@ -3,8 +3,7 @@
 
 **Stateless analytics engine for any structured dataset.**
 
-<<<<<<< HEAD
-Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries**.
+**Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries**.
 =======
 ![Spektr Execution pipeline](Docs/spektr_pipeline_animation.gif)
 
