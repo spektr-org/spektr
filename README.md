@@ -3,12 +3,12 @@
 
 **Stateless analytics engine for any structured dataset.**
 
-**Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries**.
+Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries.
 =======
 ![Spektr Execution pipeline](Docs/spektr_pipeline_animation.gif)
 
 Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries** instantly.
->>>>>>> 18946a807d263d0165a1dc5890982439dc7b4148
+
 
 Spektr is **not a hosted service**.  
 Every consumer runs its **own private instance** of the engine inside its own boundary.
@@ -28,7 +28,6 @@ No shared servers. No central processing.
 
 ## Execution Pipeline
 
-<<<<<<< HEAD
 ![Spektr Pipeline](Docs/spektr-pipeline.gif)
 =======
 Spektr is a **stateless analytics engine** that runs inside the consumer’s environment.
@@ -45,8 +44,6 @@ Each application embeds its own instance of the engine.
 • **AI optional** — analytics computation is always deterministic  
 
 Execution pipeline:
->>>>>>> 18946a807d263d0165a1dc5890982439dc7b4148
-
 ```
 Dataset → Discover → Translate → Execute → Result
 ```
@@ -123,7 +120,7 @@ Included datasets:
 Example query:
 
 ```bash
-spektr --file spektr_examples/datasets/finance_sample.csv        --query "expenses by category"
+spektr --file spektr_examples/datasets/finance_sample.csv --query "expenses by category"
 ```
 
 ---
