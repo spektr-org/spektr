@@ -28,8 +28,6 @@ No shared servers. No central processing.
 
 ## Execution Pipeline
 
-![Spektr Pipeline](Docs/spektr-pipeline.gif)
-=======
 Spektr is a **stateless analytics engine** that runs inside the consumer’s environment.
 
 Each application embeds its own instance of the engine.
