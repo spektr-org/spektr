@@ -4,8 +4,6 @@
 **Stateless analytics engine for any structured dataset.**
 
 Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries.
-=======
-![Spektr Execution pipeline](Docs/spektr_pipeline_animation.gif)
 
 Ask questions in natural language. Feed any CSV, sheet, or table. Get **charts, tables, or summaries** instantly.
 
@@ -27,12 +25,11 @@ No shared servers. No central processing.
 ---
 
 ## Execution Pipeline
+=======
+![Spektr Execution pipeline](Docs/spektr_pipeline_animation.gif)
 
 Spektr is a **stateless analytics engine** that runs inside the consumer’s environment.
 
-Each application embeds its own instance of the engine.
-
-![Spektr Architecture](Docs/Spektr_architecture.png)
 
 ### Key design principles
 
@@ -65,7 +62,7 @@ Output:
 
 ## Architecture
 
-![Spektr Architecture](Docs/spektr-architecture.png)
+![Spektr Architecture](Docs/Spektr_architecture.png)
 
 Each consumer embeds its **own Spektr instance**.
 
