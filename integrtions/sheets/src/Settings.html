@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Google Sans', Roboto, Arial, sans-serif;
+      font-size: 13px;
+      color: #1a1a2e;
+      background: #fff;
+      padding: 16px;
+    }
+
+    h1 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-bottom: 20px;
+    }
+
+    .field {
+      margin-bottom: 16px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #64748b;
+      margin-bottom: 4px;
+    }
+
+    .field .hint {
+      font-size: 10px;
+      color: #94a3b8;
+      margin-top: 3px;
+      line-height: 1.4;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    select {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    input:focus, select:focus { border-color: #6366f1; }
+    input::placeholder { color: #cbd5e1; }
+
+    .section {
+      margin-bottom: 20px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+
+    .section-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 12px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+
+    .btn-primary { background: #4f46e5; color: #fff; flex: 1; }
+    .btn-primary:hover { background: #4338ca; }
+    .btn-primary:disabled { background: #a5b4fc; cursor: not-allowed; }
+
+    .btn-secondary { background: #f1f5f9; color: #475569; }
+    .btn-secondary:hover { background: #e2e8f0; }
+
+    .status {
+      margin-top: 12px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      display: none;
+    }
+
+    .status.success { display: block; background: #ecfdf5; color: #059669; }
+    .status.error { display: block; background: #fef2f2; color: #dc2626; }
+
+    .info-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 20px;
+      font-size: 11px;
+      color: #64748b;
+      line-height: 1.6;
+    }
+
+    .info-box code {
+      background: #e2e8f0;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-family: 'Roboto Mono', monospace;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Settings</h1>
+  <p class="subtitle">Configure your Spektr connection</p>
+
+  <!-- Connection -->
+  <div class="section">
+    <div class="section-title">Connection</div>
+
+    <div class="field">
+      <label>Spektr Endpoint URL</label>
+      <input type="text" id="endpoint" placeholder="https://your-spektr-instance.example.com">
+      <div class="hint">The base URL of your Spektr HTTP server, Lambda, or local instance.</div>
+    </div>
+
+    <div class="field">
+      <label>Mode</label>
+      <select id="mode">
+        <option value="ai">AI — natural language queries (requires API key)</option>
+        <option value="local">Local — keyword-based queries (no API key needed)</option>
+      </select>
+    </div>
+
+    <div class="field" id="apiKeyField">
+      <label>AI Provider API Key</label>
+      <input type="password" id="apiKey" placeholder="AIza...">
+      <div class="hint">Your Gemini (or OpenAI-compatible) API key. Stored locally, never shared.</div>
+    </div>
+
+    <div class="field" id="modelField">
+      <label>Model Override (optional)</label>
+      <input type="text" id="model" placeholder="e.g. gemini-2.5-flash-lite">
+      <div class="hint">Leave blank to use the Spektr instance default.</div>
+    </div>
+  </div>
+
+  <!-- Sheet Names -->
+  <div class="section">
+    <div class="section-title">Sheet Names</div>
+
+    <div class="field">
+      <label>Data Source Sheet</label>
+      <input type="text" id="dataSheet" placeholder="(active sheet)">
+      <div class="hint">Leave blank to use the currently active sheet as data source.</div>
+    </div>
+
+    <div class="field">
+      <label>Results Sheet</label>
+      <input type="text" id="resultSheet" placeholder="Spektr Results">
+      <div class="hint">Where table results are written. Created automatically if it doesn't exist.</div>
+    </div>
+
+    <div class="field">
+      <label>Charts Sheet</label>
+      <input type="text" id="chartSheet" placeholder="Spektr Charts">
+      <div class="hint">Where charts are rendered. Created automatically if it doesn't exist.</div>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="actions">
+    <button class="btn btn-primary" id="saveBtn" onclick="saveSettings()">Save</button>
+    <button class="btn btn-secondary" id="testBtn" onclick="testConnection()">Test</button>
+    <button class="btn btn-secondary" onclick="goBack()">← Back</button>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <!-- Info -->
+  <div class="info-box">
+    <strong>Quick start:</strong><br>
+    1. Deploy a Spektr instance (Lambda, local server, or <code>spektr serve</code>)<br>
+    2. Paste the endpoint URL above<br>
+    3. Add your Gemini API key for natural language queries<br>
+    4. Open the sidebar and start querying<br><br>
+    <strong>Local mode</strong> works without an API key using keyword queries like
+    <code>sum story_points by priority</code>.<br><br>
+    Docs: <a href="https://github.com/spektr-org/spektr" target="_blank">github.com/spektr-org/spektr</a>
+  </div>
+
+  <script>
+    // ── Load current settings ─────────────────────────────
+    document.addEventListener('DOMContentLoaded', function() {
+      google.script.run
+        .withSuccessHandler(function(config) {
+          document.getElementById('endpoint').value = config.endpoint || '';
+          document.getElementById('apiKey').value = config.apiKey || '';
+          document.getElementById('mode').value = config.mode || 'ai';
+          document.getElementById('model').value = config.model || '';
+          document.getElementById('dataSheet').value = config.dataSheet || '';
+          document.getElementById('resultSheet').value = config.resultSheet || 'Spektr Results';
+          document.getElementById('chartSheet').value = config.chartSheet || 'Spektr Charts';
+          toggleApiKeyField();
+        })
+        .withFailureHandler(function(err) {
+          showStatus('Failed to load settings: ' + err.message, 'error');
+        })
+        .getConfig();
+
+      document.getElementById('mode').addEventListener('change', toggleApiKeyField);
+    });
+
+    function toggleApiKeyField() {
+      var mode = document.getElementById('mode').value;
+      document.getElementById('apiKeyField').style.display = mode === 'ai' ? 'block' : 'none';
+      document.getElementById('modelField').style.display = mode === 'ai' ? 'block' : 'none';
+    }
+
+    // ── Gather form values ────────────────────────────────
+    function getFormValues() {
+      return {
+        endpoint: document.getElementById('endpoint').value.trim(),
+        apiKey: document.getElementById('apiKey').value.trim(),
+        mode: document.getElementById('mode').value,
+        model: document.getElementById('model').value.trim(),
+        dataSheet: document.getElementById('dataSheet').value.trim(),
+        resultSheet: document.getElementById('resultSheet').value.trim() || 'Spektr Results',
+        chartSheet: document.getElementById('chartSheet').value.trim() || 'Spektr Charts'
+      };
+    }
+
+    // ── Save ──────────────────────────────────────────────
+    function saveSettings() {
+      var settings = getFormValues();
+      document.getElementById('saveBtn').disabled = true;
+
+      google.script.run
+        .withSuccessHandler(function() {
+          showStatus('Settings saved.', 'success');
+          document.getElementById('saveBtn').disabled = false;
+        })
+        .withFailureHandler(function(err) {
+          showStatus('Save failed: ' + err.message, 'error');
+          document.getElementById('saveBtn').disabled = false;
+        })
+        .saveConfig(settings);
+    }
+
+    // ── Test Connection ───────────────────────────────────
+    function testConnection() {
+      var settings = getFormValues();
+      document.getElementById('testBtn').disabled = true;
+
+      // Save first, then run health check after save completes
+      google.script.run
+        .withSuccessHandler(function() {
+          showStatus('Saved. Running health check...', 'success');
+          google.script.run
+            .withSuccessHandler(function() {
+              // Health check shows its own alert
+              document.getElementById('testBtn').disabled = false;
+            })
+            .withFailureHandler(function(err) {
+              showStatus('Test failed: ' + err.message, 'error');
+              document.getElementById('testBtn').disabled = false;
+            })
+            .runHealthCheck();
+        })
+        .withFailureHandler(function(err) {
+          showStatus('Save failed: ' + err.message, 'error');
+          document.getElementById('testBtn').disabled = false;
+        })
+        .saveConfig(settings);
+    }
+
+    // ── Navigation ────────────────────────────────────────
+    function goBack() {
+      google.script.run.showSidebar();
+    }
+
+    // ── Helpers ───────────────────────────────────────────
+    function showStatus(msg, type) {
+      var el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = 'status ' + type;
+
+      if (type === 'success') {
+        setTimeout(function() { el.className = 'status'; }, 3000);
+      }
+    }
+  </script>
+
+</body>
+</html>

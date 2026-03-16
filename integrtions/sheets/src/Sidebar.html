@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    /* ── Reset & Base ─────────────────────────────────────── */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Google Sans', Roboto, Arial, sans-serif;
+      font-size: 13px;
+      color: #1a1a2e;
+      background: #fff;
+      padding: 16px;
+    }
+
+    /* ── Header ───────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid #e2e8f0;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+
+    .header .mode-badge {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 3px 8px;
+      border-radius: 10px;
+    }
+
+    .mode-badge.ai { background: #ede9fe; color: #6d28d9; }
+    .mode-badge.local { background: #ecfdf5; color: #059669; }
+
+    /* ── Query Input ──────────────────────────────────────── */
+    .query-section { margin-bottom: 16px; }
+
+    .query-input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1.5px solid #cbd5e1;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+      resize: vertical;
+      min-height: 60px;
+      transition: border-color 0.2s;
+      outline: none;
+    }
+
+    .query-input:focus { border-color: #6366f1; }
+
+    .query-input::placeholder { color: #94a3b8; }
+
+    .query-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      font-family: inherit;
+    }
+
+    .btn-primary {
+      background: #4f46e5;
+      color: #fff;
+      flex: 1;
+    }
+
+    .btn-primary:hover { background: #4338ca; }
+    .btn-primary:disabled { background: #a5b4fc; cursor: not-allowed; }
+
+    .btn-secondary {
+      background: #f1f5f9;
+      color: #475569;
+    }
+
+    .btn-secondary:hover { background: #e2e8f0; }
+
+    /* ── Loading ───────────────────────────────────────────── */
+    .loading {
+      display: none;
+      text-align: center;
+      padding: 24px 0;
+    }
+
+    .loading.active { display: block; }
+
+    .spinner {
+      width: 28px;
+      height: 28px;
+      border: 3px solid #e2e8f0;
+      border-top-color: #4f46e5;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 10px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading-text { color: #64748b; font-size: 12px; }
+
+    /* ── Result ────────────────────────────────────────────── */
+    .result-section { display: none; }
+    .result-section.active { display: block; }
+
+    .reply-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      line-height: 1.6;
+      color: #334155;
+    }
+
+    .interpretation {
+      font-size: 11px;
+      color: #64748b;
+      margin-bottom: 12px;
+      padding: 8px;
+      background: #fefce8;
+      border-radius: 6px;
+      border: 1px solid #fde68a;
+    }
+
+    .interpretation strong { color: #92400e; }
+
+    .render-status {
+      font-size: 11px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+
+    .render-status.success { background: #ecfdf5; color: #059669; }
+    .render-status.error { background: #fef2f2; color: #dc2626; }
+
+    /* ── Suggestions ───────────────────────────────────────── */
+    .suggestions {
+      margin-bottom: 16px;
+    }
+
+    .suggestions-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #94a3b8;
+      margin-bottom: 6px;
+    }
+
+    .suggestion-chip {
+      display: inline-block;
+      padding: 5px 10px;
+      margin: 0 4px 4px 0;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      font-size: 11px;
+      color: #475569;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .suggestion-chip:hover {
+      background: #ede9fe;
+      border-color: #c4b5fd;
+      color: #4f46e5;
+    }
+
+    /* ── Error ──────────────────────────────────────────────── */
+    .error-box {
+      display: none;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 12px;
+      color: #991b1b;
+      margin-bottom: 12px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .error-box.active { display: block; }
+
+    /* ── Query History ─────────────────────────────────────── */
+    .history-section {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid #e2e8f0;
+    }
+
+    .history-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #94a3b8;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .history-clear {
+      font-size: 10px;
+      color: #94a3b8;
+      cursor: pointer;
+      font-weight: 400;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .history-clear:hover { color: #dc2626; }
+
+    .history-item {
+      padding: 6px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: #475569;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: background 0.1s;
+    }
+
+    .history-item:hover { background: #f1f5f9; }
+
+    .history-empty {
+      font-size: 11px;
+      color: #cbd5e1;
+      font-style: italic;
+    }
+
+    /* ── Footer ────────────────────────────────────────────── */
+    .footer {
+      margin-top: 24px;
+      padding-top: 12px;
+      border-top: 1px solid #e2e8f0;
+      text-align: center;
+    }
+
+    .footer a {
+      font-size: 11px;
+      color: #94a3b8;
+      text-decoration: none;
+    }
+
+    .footer a:hover { color: #4f46e5; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <h1>Spektr</h1>
+    <span class="mode-badge" id="modeBadge">ai</span>
+  </div>
+
+  <!-- Query Input -->
+  <div class="query-section">
+    <textarea
+      class="query-input"
+      id="queryInput"
+      placeholder="Ask a question about your data...&#10;e.g. &quot;bugs by priority&quot; or &quot;average story points by assignee&quot;"
+    ></textarea>
+    <div class="query-actions">
+      <button class="btn btn-primary" id="runBtn" onclick="runQuery()">Analyze</button>
+      <button class="btn btn-secondary" onclick="openSettings()">⚙</button>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <div class="loading-text">Analyzing your data...</div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-box" id="errorBox"></div>
+
+  <!-- Result -->
+  <div class="result-section" id="resultSection">
+    <div class="reply-box" id="replyBox"></div>
+    <div class="interpretation" id="interpretationBox" style="display:none;"></div>
+    <div class="render-status" id="renderStatus"></div>
+    <div class="suggestions" id="suggestionsBox" style="display:none;">
+      <div class="suggestions-label">Try next</div>
+      <div id="suggestionChips"></div>
+    </div>
+  </div>
+
+  <!-- Query History -->
+  <div class="history-section">
+    <div class="history-label">
+      Recent queries
+      <span class="history-clear" onclick="clearHistory()">clear</span>
+    </div>
+    <div id="historyList"></div>
+  </div>
+
+  <!-- Footer -->
+  <div class="footer">
+    <a href="https://github.com/spektr-org/spektr" target="_blank">Spektr — open-source analytics engine</a>
+  </div>
+
+  <script>
+    // ── State ──────────────────────────────────────────────
+    var isRunning = false;
+
+    // ── Init ──────────────────────────────────────────────
+    document.addEventListener('DOMContentLoaded', function() {
+      loadConfig();
+      loadHistory();
+
+      // Ctrl+Enter to run
+      document.getElementById('queryInput').addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          runQuery();
+        }
+      });
+    });
+
+    function loadConfig() {
+      google.script.run
+        .withSuccessHandler(function(config) {
+          var badge = document.getElementById('modeBadge');
+          badge.textContent = config.mode || 'ai';
+          badge.className = 'mode-badge ' + (config.mode || 'ai');
+
+          if (!config.endpoint) {
+            showError('No Spektr endpoint configured. Click ⚙ to set up your connection.');
+          }
+        })
+        .getConfig();
+    }
+
+    function loadHistory() {
+      google.script.run
+        .withSuccessHandler(function(config) {
+          renderHistory(config.queryHistory || []);
+        })
+        .getConfig();
+    }
+
+    // ── Query Execution ───────────────────────────────────
+    function runQuery(queryOverride) {
+      if (isRunning) return;
+
+      var query = queryOverride || document.getElementById('queryInput').value.trim();
+      if (!query) return;
+
+      // Update input if using override (clicked suggestion/history)
+      if (queryOverride) {
+        document.getElementById('queryInput').value = query;
+      }
+
+      setRunning(true);
+      hideError();
+      hideResult();
+
+      google.script.run
+        .withSuccessHandler(function(response) {
+          if (!response.ok) {
+            showError(response.error);
+            setRunning(false);
+            return;
+          }
+
+          // Display reply and interpretation
+          showResult(response.data);
+
+          // Render to sheet
+          google.script.run
+            .withSuccessHandler(function(renderResponse) {
+              var statusEl = document.getElementById('renderStatus');
+              if (renderResponse.ok) {
+                statusEl.textContent = '✓ ' + renderResponse.summary;
+                statusEl.className = 'render-status success';
+              } else {
+                statusEl.textContent = '✗ ' + renderResponse.error;
+                statusEl.className = 'render-status error';
+              }
+              setRunning(false);
+              loadHistory();
+            })
+            .withFailureHandler(function(err) {
+              var statusEl = document.getElementById('renderStatus');
+              statusEl.textContent = '✗ Render error: ' + err.message;
+              statusEl.className = 'render-status error';
+              setRunning(false);
+            })
+            .renderResult(response.data);
+        })
+        .withFailureHandler(function(err) {
+          showError('Unexpected error: ' + err.message);
+          setRunning(false);
+        })
+        .runPipeline(query);
+    }
+
+    // ── Result Display ────────────────────────────────────
+    function showResult(data) {
+      var section = document.getElementById('resultSection');
+      section.className = 'result-section active';
+
+      // Reply
+      var replyBox = document.getElementById('replyBox');
+      replyBox.textContent = data.result.reply || 'Query executed successfully.';
+
+      // Interpretation
+      var interpBox = document.getElementById('interpretationBox');
+      var interp = data.result.interpretation || data.spec;
+      if (interp) {
+        var parts = [];
+        if (interp.summary) parts.push(interp.summary);
+        if (data.spec) {
+          if (data.spec.aggregation) parts.push('Aggregation: ' + data.spec.aggregation);
+          if (data.spec.measure) parts.push('Measure: ' + data.spec.measure);
+          if (data.spec.groupBy) parts.push('Group by: ' + data.spec.groupBy.join(', '));
+        }
+        if (parts.length > 0) {
+          interpBox.innerHTML = '<strong>Interpreted as:</strong> ' + escapeHtml(parts.join(' · '));
+          interpBox.style.display = 'block';
+        } else {
+          interpBox.style.display = 'none';
+        }
+      } else {
+        interpBox.style.display = 'none';
+      }
+
+      // Suggestions (from interpretation)
+      var sugBox = document.getElementById('suggestionsBox');
+      var chipContainer = document.getElementById('suggestionChips');
+      var suggestions = (data.result.interpretation && data.result.interpretation.suggestions) || [];
+      if (suggestions.length > 0) {
+        chipContainer.innerHTML = '';
+        suggestions.forEach(function(s) {
+          var chip = document.createElement('span');
+          chip.className = 'suggestion-chip';
+          chip.textContent = s.label || s.modifier;
+          chip.onclick = function() {
+            runQuery(s.modifier || s.label);
+          };
+          chipContainer.appendChild(chip);
+        });
+        sugBox.style.display = 'block';
+      } else {
+        sugBox.style.display = 'none';
+      }
+    }
+
+    // ── History ───────────────────────────────────────────
+    function renderHistory(items) {
+      var list = document.getElementById('historyList');
+      if (items.length === 0) {
+        list.innerHTML = '<div class="history-empty">No queries yet</div>';
+        return;
+      }
+
+      list.innerHTML = '';
+      items.forEach(function(q) {
+        var item = document.createElement('div');
+        item.className = 'history-item';
+        item.textContent = q;
+        item.title = q;
+        item.onclick = function() { runQuery(q); };
+        list.appendChild(item);
+      });
+    }
+
+    function clearHistory() {
+      google.script.run
+        .withSuccessHandler(function() {
+          renderHistory([]);
+        })
+        .clearQueryHistory();
+    }
+
+    // ── UI Helpers ────────────────────────────────────────
+    function setRunning(running) {
+      isRunning = running;
+      document.getElementById('runBtn').disabled = running;
+      document.getElementById('loading').className = running ? 'loading active' : 'loading';
+    }
+
+    function showError(msg) {
+      var box = document.getElementById('errorBox');
+      box.textContent = msg;
+      box.className = 'error-box active';
+    }
+
+    function hideError() {
+      document.getElementById('errorBox').className = 'error-box';
+    }
+
+    function hideResult() {
+      document.getElementById('resultSection').className = 'result-section';
+    }
+
+    function openSettings() {
+      google.script.run.showSettings();
+    }
+
+    function escapeHtml(str) {
+      var div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+  </script>
+
+</body>
+</html>

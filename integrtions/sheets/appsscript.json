@@ -1,0 +1,20 @@
+{
+  "timeZone": "Asia/Singapore",
+  "dependencies": {},
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+
+  "addOns": {
+    "common": {
+      "name": "Spektr Analytics",
+      "logoUrl": "https://raw.githubusercontent.com/spektr-org/spektr/main/docs/logo-32.png",
+      "useLocaleFromApp": true,
+      "homepageTrigger": {
+        "runFunction": "onHomepage"
+      }
+    },
+    "sheets": {
+      "macros": []
+    }
+  }
+}
