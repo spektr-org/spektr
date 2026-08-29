@@ -50,7 +50,7 @@ You are a TRANSLATOR ONLY — do NOT compute any values. The engine will do all 
 	// ── Data Summary ──────────────────────────────────────────────────────
 	if dataSummary != nil {
 		summaryJSON, _ := json.MarshalIndent(dataSummary, "", "  ")
-		b.WriteString(fmt.Sprintf("DATA SUMMARY (what data is available — NOT actual values):\n%s\n\n", string(summaryJSON)))
+		b.WriteString(fmt.Sprintf("DATA SUMMARY (no raw records or measure values — schema metadata and selected categorical dimension labels only):\n%s\n\n", string(summaryJSON)))
 	}
 
 	// ── Schema Description ────────────────────────────────────────────────
@@ -116,8 +116,12 @@ func buildDimensionDescription(sch schema.Config) string {
 		if d.Description != "" {
 			b.WriteString(fmt.Sprintf(": %s", d.Description))
 		}
-		if len(d.SampleValues) > 0 {
+		if len(d.SampleValues) > 0 && !isLikelyPerRowIdentifier(d) {
 			b.WriteString(fmt.Sprintf(" — values: [%s]", strings.Join(quotedValues(d.SampleValues), ", ")))
+		} else if isLikelyPerRowIdentifier(d) {
+			// Per-row identifier / surrogate key: expose the column name so the AI
+			// knows it exists, but NEVER its per-row values (privacy boundary).
+			b.WriteString(" — [identifier column: per-row values not shown]")
 		}
 		if d.IsTemporal {
 			b.WriteString(" [TEMPORAL — use for time-based queries]")
@@ -164,7 +168,7 @@ func buildMeasureDescription(sch schema.Config) string {
 func buildHierarchyDescription(sch schema.Config) string {
 	var b strings.Builder
 	for _, d := range sch.Dimensions {
-		if d.Parent != "" {
+		if d.Parent != "" && !isLikelyPerRowIdentifier(d) {
 			b.WriteString(fmt.Sprintf("- \"%s\" is a child of \"%s\" (e.g., filter parent then group by child for breakdown)\n", d.Key, d.Parent))
 		}
 	}
@@ -185,10 +189,14 @@ func buildResponseFormat(sch schema.Config) string {
 		measureKeys[i] = m.Key
 	}
 
-	// Build groupBy dimension list
-	dimKeys := make([]string, len(sch.Dimensions))
-	for i, d := range sch.Dimensions {
-		dimKeys[i] = fmt.Sprintf("\"%s\"", d.Key)
+	// Build groupBy dimension list (exclude per-row identifiers — grouping by a
+	// surrogate key is meaningless and would leak the key into examples)
+	dimKeys := make([]string, 0, len(sch.Dimensions))
+	for _, d := range sch.Dimensions {
+		if isLikelyPerRowIdentifier(d) {
+			continue
+		}
+		dimKeys = append(dimKeys, fmt.Sprintf("\"%s\"", d.Key))
 	}
 
 	return fmt.Sprintf(`RESPONSE FORMAT (ALWAYS valid JSON, no markdown):
@@ -229,9 +237,12 @@ func buildResponseFormat(sch schema.Config) string {
 }
 
 func buildQuerySpecRules(sch schema.Config) string {
-	// Build dimension keys for groupBy examples
+	// Build dimension keys for groupBy examples (exclude per-row identifiers)
 	dimKeys := make([]string, 0)
 	for _, d := range sch.Dimensions {
+		if isLikelyPerRowIdentifier(d) {
+			continue
+		}
 		dimKeys = append(dimKeys, fmt.Sprintf("\"%s\"", d.Key))
 	}
 
@@ -334,9 +345,12 @@ func buildExampleTranslations(sch schema.Config) string {
 
 	measure := sch.GetDefaultMeasure()
 
-	// Pick dimensions for examples
+	// Pick dimensions for examples (skip per-row identifiers)
 	var firstDim, secondDim, temporalDim string
 	for _, d := range sch.Dimensions {
+		if isLikelyPerRowIdentifier(d) {
+			continue
+		}
 		if d.IsTemporal && temporalDim == "" {
 			temporalDim = d.Key
 		} else if firstDim == "" {
@@ -395,4 +409,49 @@ func quotedValues(vals []string) []string {
 		quoted[i] = fmt.Sprintf("\"%s\"", v)
 	}
 	return quoted
+}
+// isLikelyPerRowIdentifier reports whether a dimension is a per-row identifier
+// / surrogate key (e.g. record_id, uuid) rather than a groupable category.
+//
+// Such columns must not leak their per-row values across the trust boundary,
+// and are meaningless as group-by keys. Detection uses two independent signals
+// so it stays conservative and never suppresses a legitimate category:
+//
+//   - CardinalityHint == "high"  (distinct count is large — set by discovery
+//     when uniqueCount > 100), AND
+//   - the column name looks like an identifier (record_id, *_id, *_key, uuid …).
+//
+// A genuine grouping identifier that repeats across rows (e.g. playbookId with
+// ~10 distinct values) is NOT "high" cardinality, so it is never suppressed and
+// keeps its sample values. This is deliberately name+cardinality (not name
+// alone), so a low-cardinality "type"/"category" column is unaffected.
+func isLikelyPerRowIdentifier(d schema.DimensionMeta) bool {
+	if d.CardinalityHint != "high" {
+		return false
+	}
+	return isIdentifierKeyName(d.Key)
+}
+
+// isIdentifierKeyName mirrors schema discovery's identifier-name heuristic,
+// duplicated here (prompt package can't import schema internals) to decide
+// value suppression at prompt-build time.
+func isIdentifierKeyName(key string) bool {
+	lower := strings.ToLower(key)
+	suffixes := []string{"id", "ids", "key", "keys", "uid", "uuid", "ref", "guid", "code"}
+	for _, s := range suffixes {
+		if lower == s || strings.HasSuffix(lower, "_"+s) {
+			return true
+		}
+		if strings.HasSuffix(lower, s) && len(lower) > len(s) {
+			if prev := lower[len(lower)-len(s)-1]; prev == '_' {
+				return true
+			}
+		}
+	}
+	for _, p := range []string{"id_", "uid_", "uuid_", "ref_"} {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
 }

@@ -283,7 +283,7 @@ func TestValidateNoEmptyDimensions(t *testing.T) {
 			if d.DisplayName == "" {
 				t.Errorf("%s: dimension %s has empty display name", name, d.Key)
 			}
-			if len(d.SampleValues) == 0 {
+			if len(d.SampleValues) == 0 && !d.Sensitive {
 				t.Errorf("%s: dimension %s has no sample values", name, d.Key)
 			}
 		}

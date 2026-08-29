@@ -97,6 +97,9 @@ type SubView struct {
 }
 
 func newSubView(parent RecordView, indices []int) RecordView {
+	// ── EVIDENCE: a SubView holds INDICES into the parent view — zero rows are
+	// copied. The engine reads consumer data by reference, never owning it. ──
+	trace("SubView created: %d indices into parent, 0 records copied (zero-copy)", len(indices))
 	return &SubView{parent: parent, indices: indices}
 }
 

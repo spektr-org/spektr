@@ -189,7 +189,7 @@ Examples:
 	case "csv":
 		writeCSV(writer, execResult)
 		if *outFile != "" {
-			log.Printf("📄 CSV written to %s", *outFile)
+			log.Printf("📄 CSV written to the specified CSV")
 		}
 	case "text":
 		lines := []string{}

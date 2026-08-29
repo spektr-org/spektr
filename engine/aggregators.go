@@ -59,6 +59,14 @@ func GroupAndAggregate(
 		groups = groups[:limit]
 	}
 
+	// ── EVIDENCE: grouping/aggregation are in-memory map + arithmetic ops over
+	// the view. No query engine, no database round-trip. ──
+	trace("GROUP+AGGREGATE (in-memory): groupBy=%v aggregation=%q measure=%q -> %d groups",
+		groupBy, aggregation, measure, len(groups))
+	for _, g := range groups {
+		trace("  group %q: count=%d value=%.4f", g.Label, g.Count, g.Value)
+	}
+
 	return groups
 }
 

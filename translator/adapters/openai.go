@@ -87,6 +87,9 @@ func (a *OpenAIAdapter) Complete(prompt string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 
+	// ── EVIDENCE: single point of network egress (see note in gemini.go). ──
+	trace("NETWORK EGRESS (the only outbound call): POST %d bytes -> OpenAI-compat (%s)", len(body), a.model)
+
 	resp, err := a.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
@@ -113,7 +116,10 @@ func (a *OpenAIAdapter) Complete(prompt string) (string, error) {
 		return "", fmt.Errorf("OpenAI returned empty response")
 	}
 
-	return parsed.Choices[0].Message.Content, nil
+	out := parsed.Choices[0].Message.Content
+	trace("AI RESPONSE received (%d bytes) — raw text (a QuerySpec JSON, not a query):", len(out))
+	trace("%s", out)
+	return out, nil
 }
 
 // ── OpenAI-specific HTTP shapes (internal to this adapter) ────────────────

@@ -50,6 +50,7 @@ type DimensionMeta struct {
 	TemporalOrder  string   `json:"temporalOrder,omitempty"` // "chronological" or "reverse"
 	IsCurrencyCode bool     `json:"isCurrencyCode,omitempty"`
 	CardinalityHint string  `json:"cardinalityHint,omitempty"` // "low", "medium", "high"
+	Sensitive       bool    `json:"sensitive,omitempty"`       // PII/sensitive: values never sent to AI, not groupable
 	DerivedFrom    string   `json:"derivedFrom,omitempty"`     // Original column if auto-bucketed
 	SortHint       string   `json:"sortHint,omitempty"`        // Ordinal ordering (e.g., "P1 > P2 > P3 > P4") — set by Smart Refine
 }

@@ -48,6 +48,11 @@ func ApplyFilters(view RecordView, filters Filters) RecordView {
 		}
 	}
 
+	// ── EVIDENCE: filtering is an in-memory scan producing an index list.
+	// No query string (SQL or otherwise) is constructed — there is nothing to log
+	// as a "query" because none exists. ──
+	trace("FILTER (in-memory scan, NO query generated): %d records -> %d matched", n, len(indices))
+
 	return newSubView(view, indices)
 }
 

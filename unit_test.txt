@@ -1,0 +1,337 @@
+?   	github.com/spektr-org/spektr	[no test files]
+?   	github.com/spektr-org/spektr/api	[no test files]
+?   	github.com/spektr-org/spektr/cmd/server	[no test files]
+?   	github.com/spektr-org/spektr/cmd/spektr	[no test files]
+?   	github.com/spektr-org/spektr/engine	[no test files]
+?   	github.com/spektr-org/spektr/helpers	[no test files]
+=== JIRA SCHEMA ===
+{
+  "name": "Auto-discovered Dataset",
+  "version": "1.0",
+  "dimensions": [
+    {
+      "key": "issue_key",
+      "displayName": "Issue Key",
+      "sampleValues": [
+        "PROJ-101",
+        "PROJ-102",
+        "PROJ-103",
+        "PROJ-104",
+        "PROJ-105",
+        "PROJ-106",
+        "PROJ-107",
+        "PROJ-108",
+        "PROJ-109",
+        "PROJ-110"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "parent": "assignee",
+      "temporalOrder": "chronological",
+      "cardinalityHint": "medium"
+    },
+    {
+      "key": "status",
+      "displayName": "Status",
+      "sampleValues": [
+        "Done",
+        "In Progress",
+        "In Review",
+        "To Do"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "priority",
+      "displayName": "Priority",
+      "sampleValues": [
+        "P1 - Critical",
+        "P2 - High",
+        "P3 - Medium",
+        "P4 - Low"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "issue_type",
+      "displayName": "Issue Type",
+      "sampleValues": [
+        "Bug",
+        "Story",
+        "Task"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "assignee",
+      "displayName": "Assignee",
+      "sampleValues": [
+        "alice@corp.com",
+        "bob@corp.com",
+        "charlie@corp.com",
+        "dave@corp.com",
+        "eve@corp.com",
+        "frank@corp.com"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "component",
+      "displayName": "Component",
+      "sampleValues": [
+        "Backend",
+        "Documentation",
+        "Frontend",
+        "Infrastructure",
+        "Mobile"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "sprint",
+      "displayName": "Sprint",
+      "sampleValues": [
+        "Sprint 15",
+        "Sprint 16",
+        "Sprint 17",
+        "Sprint 18"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "created",
+      "displayName": "Created",
+      "sampleValues": [
+        "2026-01-05",
+        "2026-01-07",
+        "2026-01-08",
+        "2026-01-09",
+        "2026-01-10",
+        "2026-01-12",
+        "2026-01-14",
+        "2026-01-15",
+        "2026-01-16",
+        "2026-01-18"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "parent": "assignee",
+      "isTemporal": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "medium"
+    },
+    {
+      "key": "resolved",
+      "displayName": "Resolved",
+      "sampleValues": [
+        "2026-01-07",
+        "2026-01-12",
+        "2026-01-15",
+        "2026-01-18",
+        "2026-01-20"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "parent": "status",
+      "isTemporal": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    }
+  ],
+  "measures": [
+    {
+      "key": "story_points",
+      "displayName": "Story Points",
+      "unit": "points",
+      "aggregations": [
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "count"
+      ],
+      "defaultAggregation": "avg"
+    },
+    {
+      "key": "time_spent_hours",
+      "displayName": "Time Spent Hours",
+      "unit": "hours",
+      "aggregations": [
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "count"
+      ],
+      "defaultAggregation": "sum"
+    },
+    {
+      "key": "record_count",
+      "displayName": "Record Count",
+      "description": "Number of records (auto-generated)",
+      "isSynthetic": true,
+      "aggregations": [
+        "count"
+      ],
+      "defaultAggregation": "count"
+    }
+  ],
+  "discoveredFrom": "CSV",
+  "discoveredAt": "2026-08-29T01:42:24+08:00",
+  "skippedColumns": [
+    {
+      "column": "Summary",
+      "reason": "Unique per row — likely an identifier or free text",
+      "recoverable": true
+    }
+  ]
+}
+
+--- FAIL: TestDiscoverJiraCSV (0.02s)
+    discover_test.go:72: Issue Key should be skipped (unique ID): "Issue Key" not found in [Summary]
+=== FINANCE SCHEMA ===
+{
+  "name": "Auto-discovered Dataset",
+  "version": "1.0",
+  "dimensions": [
+    {
+      "key": "month",
+      "displayName": "Month",
+      "sampleValues": [
+        "Feb-2026",
+        "Jan-2026"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "isTemporal": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "location",
+      "displayName": "Location",
+      "sampleValues": [
+        "India",
+        "Singapore"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "category",
+      "displayName": "Category",
+      "sampleValues": [
+        "Expense",
+        "Income",
+        "Transfer"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "field",
+      "displayName": "Field",
+      "sampleValues": [
+        "Groceries",
+        "Internet",
+        "Property Tax",
+        "Rent",
+        "Rental Income",
+        "Salary",
+        "ToIndia",
+        "Transport"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "parent": "category",
+      "temporalOrder": "chronological",
+      "cardinalityHint": "low"
+    },
+    {
+      "key": "currency",
+      "displayName": "Currency",
+      "sampleValues": [
+        "INR",
+        "SGD"
+      ],
+      "groupable": true,
+      "filterable": true,
+      "temporalOrder": "chronological",
+      "isCurrencyCode": true,
+      "cardinalityHint": "low"
+    }
+  ],
+  "measures": [
+    {
+      "key": "amount",
+      "displayName": "Amount",
+      "unit": "currency",
+      "isCurrency": true,
+      "aggregations": [
+        "sum",
+        "avg",
+        "min",
+        "max",
+        "count"
+      ],
+      "defaultAggregation": "sum"
+    },
+    {
+      "key": "record_count",
+      "displayName": "Record Count",
+      "description": "Number of records (auto-generated)",
+      "isSynthetic": true,
+      "aggregations": [
+        "count"
+      ],
+      "defaultAggregation": "count"
+    }
+  ],
+  "currency": {
+    "enabled": true,
+    "codeDimension": "currency",
+    "baseCurrency": "INR",
+    "rates": {}
+  },
+  "discoveredFrom": "CSV",
+  "discoveredAt": "2026-08-29T01:42:24+08:00"
+}
+
+--- FAIL: TestValidateJiraDiscovery (0.00s)
+    validate_test.go:93: Issue Key should be skipped -- "Issue Key" not found in [Summary]
+    validate_test.go:96: Jira: 11 dims, 4 measures, 1 skipped
+--- FAIL: TestValidateEcommerceDiscovery (0.00s)
+    validate_test.go:170: Order ID should be skipped -- "Order ID" not found in []
+    validate_test.go:172: E-commerce: 10 dims, 6 measures, 0 skipped, currency=true
+--- FAIL: TestValidateHRDiscovery (0.00s)
+    validate_test.go:234: Employee ID should be skipped -- "Employee ID" not found in []
+    validate_test.go:235: Full Name should be skipped -- "Full Name" not found in []
+    validate_test.go:237: HR: 9 dims, 4 measures, 0 skipped
+FAIL
+FAIL	github.com/spektr-org/spektr/schema	0.719s
+?   	github.com/spektr-org/spektr/spektr_examples/examples	[no test files]
+?   	github.com/spektr-org/spektr/translator	[no test files]
+?   	github.com/spektr-org/spektr/translator/adapters	[no test files]
+FAIL

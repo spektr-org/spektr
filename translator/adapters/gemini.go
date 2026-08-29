@@ -73,6 +73,11 @@ func (a *GeminiAdapter) Complete(prompt string) (string, error) {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	// ── EVIDENCE: this is the SINGLE point of network egress in Spektr.
+	// This is the only place a request leaves the process. (Grep the repo:
+	// net/http appears only in adapters/*.go.) ──
+	trace("NETWORK EGRESS (the only outbound call): POST %d bytes -> Gemini (%s)", len(body), a.model)
+
 	resp, err := a.client.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("HTTP request failed: %w", err)
@@ -99,7 +104,10 @@ func (a *GeminiAdapter) Complete(prompt string) (string, error) {
 		return "", fmt.Errorf("Gemini returned empty response")
 	}
 
-	return parsed.Candidates[0].Content.Parts[0].Text, nil
+	out := parsed.Candidates[0].Content.Parts[0].Text
+	trace("AI RESPONSE received (%d bytes) — raw text (a QuerySpec JSON, not a query):", len(out))
+	trace("%s", out)
+	return out, nil
 }
 
 // ── Gemini-specific HTTP shapes (internal to this adapter) ────────────────

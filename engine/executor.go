@@ -50,6 +50,14 @@ func Execute(spec QuerySpec, view RecordView, opts ...Option) (*Result, error) {
 		}, nil
 	}
 
+	// ── EVIDENCE: everything below this line is LOCAL. The engine package
+	// imports no HTTP/AI client; no network call or AI invocation can occur
+	// from here on. All numbers are computed in-process. ──
+	trace("================= ENTERING LOCAL EXECUTION =================")
+	trace("No AI and no network from this point. Executing QuerySpec over %d in-memory records.", view.Len())
+	trace("QuerySpec: intent=%q aggregation=%q measure=%q groupBy=%v filters=%v",
+		spec.Intent, spec.Aggregation, measure, spec.GroupBy, spec.Filters.Dimensions)
+
 	log.Printf("🔧 Spektr: Processing %d records, intent=%s, visualize=%s, aggregation=%s, measure=%s",
 		view.Len(), spec.Intent, spec.Visualize, spec.Aggregation, measure)
 
@@ -133,7 +141,13 @@ func Execute(spec QuerySpec, view RecordView, opts ...Option) (*Result, error) {
 	}
 
 	// 5. Resolve reply template placeholders
+	// ── EVIDENCE: computed values are substituted into the reply template
+	// LOCALLY, after all computation. These numbers are never returned to the AI. ──
+	trace("Resolving reply template LOCALLY (computed values never sent to AI):")
+	trace("  template (from AI, unresolved): %q", spec.Reply)
 	result.Reply = ResolvePlaceholders(spec.Reply, groups, filtered, measure, displayUnit)
+	trace("  resolved (filled in-process):   %q", result.Reply)
+	trace("================= LOCAL EXECUTION COMPLETE =================")
 
 	return result, nil
 }

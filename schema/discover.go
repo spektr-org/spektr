@@ -329,18 +329,27 @@ func (col *columnAnalysis) classifyRole(totalRows int) {
 
 	case typeString:
 		if col.uniqueCount == totalRows && totalRows > 10 {
-			// If the column name signals a grouping identifier (playbookId, serviceId,
-			// userId, etc.) keep it as a dimension — these are the natural group-by keys
-			// in ops, security, and product data even when every value is unique.
-			if isIdentifierName(col.key) {
-				col.role = roleDimension
-				return
-			}
-			// Otherwise likely free-text or a true surrogate key — skip but mark
-			// recoverable so the consumer can force-include via RecoverColumns.
+			// A unique-per-row string column is a surrogate key / identifier / free
+			// text — NOT a useful group-by dimension, and its per-row values must not
+			// cross the AI trust boundary. Always skipped.
+			//
+			// Recoverability differs by kind:
+			//   - identifier-named (issue_key, order_id, employee_id, *_name that is
+			//     unique-per-row) → NOT recoverable: it is a true key, never a
+			//     group-by dimension. (discover_test: "Issue Key NOT recoverable".)
+			//   - otherwise free-text (e.g. a Summary column) → recoverable, so a
+			//     consumer may force-include it via RecoverColumns.
+			//
+			// A genuine grouping identifier (playbookId repeating across rows) is not
+			// unique-per-row, never reaches this branch, and stays a dimension below.
 			col.role = roleSkipped
-			col.skipReason = "Unique per row — likely an identifier or free text"
-			col.recoverable = true
+			if isIdentifierName(col.key) {
+				col.skipReason = "Unique per row — identifier key (excluded from AI context)"
+				col.recoverable = false
+			} else {
+				col.skipReason = "Unique per row — likely free text"
+				col.recoverable = true
+			}
 			return
 		}
 		if col.uniqueCount > totalRows/2 && col.uniqueCount > 50 {
@@ -707,7 +716,7 @@ func detectCurrencyConfig(dimensions []DimensionMeta) *CurrencyConfig {
 
 // toDimension converts a column analysis into DimensionMeta.
 func (col *columnAnalysis) toDimension() DimensionMeta {
-	return DimensionMeta{
+	d := DimensionMeta{
 		Key:             col.key,
 		DisplayName:     toDisplayName(col.header),
 		SampleValues:    col.sampleVals,
@@ -719,6 +728,95 @@ func (col *columnAnalysis) toDimension() DimensionMeta {
 		IsCurrencyCode:  col.isCurrencyCode,
 		CardinalityHint: col.cardinalityHint,
 	}
+
+	// ── PRIVACY: sensitive / PII columns (name, email, picture_url, …) have their
+	// per-row VALUES suppressed at the SOURCE — regardless of cardinality — so no
+	// consumer (AI prompt, summary, examples) can transmit them to the language
+	// model. The column REMAINS a fully usable dimension: the local engine still
+	// groups, filters, and computes on the real values (it holds the records);
+	// only the boundary-crossing sample values are withheld. Grouping by a PII
+	// column (e.g. "orders by customer_name") is valid in general library use —
+	// what's protected is transmission of the values to the AI, not the column's
+	// analytical usability.
+	if isSensitiveColumnName(col.key) {
+		d.SampleValues = nil // values never cross the trust boundary
+		d.Sensitive = true
+		// Groupable / Filterable intentionally left TRUE — local computation is
+		// unaffected; only value transmission to the AI is suppressed.
+	}
+
+	return d
+}
+
+// isSensitiveColumnName reports whether a column name signals personally
+// identifying or otherwise sensitive information whose VALUES must never be sent
+// to the language model. Matching is TOKEN-based (splitting on _ / camelCase
+// boundaries) to avoid false positives from substrings (e.g. "ip" inside
+// "subscription"). We err toward suppression for genuine PII, but avoid
+// suppressing legitimate low-sensitivity analytical dimensions.
+func isSensitiveColumnName(key string) bool {
+	lower := strings.ToLower(key)
+
+	// Tokens that make a column sensitive if they appear as a whole word
+	// (bounded by _ or string ends). This prevents "ip"→"subscription" errors.
+	// NOTE: deliberately excludes bare "device"/"account"/"geo"/"ip" — these are
+	// PII only in compound identifier forms (device_id, account_number, geo_lat,
+	// ip_address), which are caught by the substring list below or by the token
+	// combos. As bare category names (device_type, account_type) they are normal
+	// analytical dimensions and must keep their values.
+	sensitiveTokens := map[string]bool{
+		"name": true, "email": true, "phone": true, "mobile": true,
+		"contact": true, "picture": true, "photo": true, "avatar": true,
+		"address": true, "addr": true, "street": true, "zip": true,
+		"postal": true, "postcode": true, "dob": true, "birthday": true,
+		"ssn": true, "nric": true, "passport": true, "gender": true,
+		"ethnicity": true, "religion": true, "salary": true,
+		"latitude": true, "longitude": true, "secret": true,
+	}
+	for _, tok := range splitTokens(lower) {
+		if sensitiveTokens[tok] {
+			return true
+		}
+	}
+
+	// Any column whose name ends in "_url" (or is exactly "url") is treated as
+	// sensitive: URLs in a user/entity dataset typically point at a person
+	// (profile_url, photo_url, website_url, avatar_url). Suffix-matched so it does
+	// not collide with normal category names.
+	if lower == "url" || strings.HasSuffix(lower, "_url") {
+		return true
+	}
+
+	// Multi-char / compound signals safe to match as substrings (long enough that
+	// accidental collisions are implausible). Compound identifier forms live here.
+	for _, s := range []string{
+		"email", "picture_url", "photo_url", "avatar_url",
+		"google_id", "user_id", "userid", "tax_id", "national_id",
+		"device_id", "account_id", "account_number", "ip_address",
+		"credit_card", "cardnumber", "phone_number",
+	} {
+		if strings.Contains(lower, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// splitTokens breaks a key into lowercase tokens on underscores, spaces, and
+// camelCase boundaries (e.g. "pictureUrl" → ["picture","url"]).
+func splitTokens(s string) []string {
+	// normalize camelCase to underscores
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			b.WriteByte('_')
+		}
+		b.WriteRune(r)
+	}
+	fields := strings.FieldsFunc(strings.ToLower(b.String()), func(r rune) bool {
+		return r == '_' || r == ' ' || r == '-'
+	})
+	return fields
 }
 
 // toMeasure converts a column analysis into MeasureMeta.
