@@ -27,3 +27,7 @@ Thumbs.db
 
 # Extension zips
 *.zip
+spektr-results*.csv
+spektr-trace*.log
+*_prod.csv
+test*.csv
