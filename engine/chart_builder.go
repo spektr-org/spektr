@@ -206,3 +206,58 @@ func assignColors(count int) []string {
 	}
 	return colors
 }
+
+// ============================================================================
+// PROGRESS CHART
+// ============================================================================
+
+// BuildProgressChart renders actual against plan: the series is what happened,
+// the reference line is what was meant to happen.
+//
+// Separate from BuildChart because progress has a shape the generic builder has
+// no way to express — one bar (or a run of them over time) measured against a
+// horizontal line that is not derived from any of them.
+func BuildProgressChart(spec QuerySpec, d *ProgressData, groups []Group) *ChartConfig {
+	title := spec.Title
+	if title == "" {
+		title = "Progress"
+	}
+
+	chartType := spec.Visualize
+	if chartType == "" || chartType == "text" {
+		chartType = "bar"
+	}
+
+	// Grouped (month by month, say) renders the run; ungrouped renders the one
+	// total, which is still worth drawing against the line.
+	points := make([]ChartPoint, 0, len(groups))
+	if len(groups) == 0 {
+		points = append(points, ChartPoint{Label: d.ActualLabel, Value: d.Actual})
+	} else {
+		for _, g := range groups {
+			points = append(points, ChartPoint{Label: g.Label, Value: g.Value})
+		}
+	}
+
+	return &ChartConfig{
+		ChartType:  chartType,
+		Title:      title,
+		Series:     []ChartSeries{{Name: "Actual", Data: points}},
+		ShowLegend: true,
+		ShowGrid:   true,
+		ReferenceLine: &ReferenceLine{
+			Value: d.Plan,
+			Label: planLineLabel(d),
+		},
+	}
+}
+
+// planLineLabel names the line on the chart. The plan's own name is better than
+// "Plan" when the caller gave one — "Contract value" or "2,000 km goal" tells a
+// reader what they are looking at without a legend.
+func planLineLabel(d *ProgressData) string {
+	if d.PlanLabel != "" {
+		return d.PlanLabel
+	}
+	return "Plan"
+}

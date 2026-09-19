@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // ============================================================================
@@ -215,4 +216,46 @@ func DerivePeriod(view RecordView) string {
 	}
 
 	return fmt.Sprintf("%s – %s", earliest, latest)
+}
+
+// ============================================================================
+// PROGRESS PLACEHOLDERS
+// ============================================================================
+
+// resolveProgressPlaceholders fills a reply template from a ProgressData.
+//
+// Pace placeholders resolve to empty when the caller supplied no Elapsed, so a
+// template written for the richer case degrades to a shorter sentence rather
+// than printing "{pace}" at the user.
+func resolveProgressPlaceholders(template string, d *ProgressData, unit, period string) string {
+	out := template
+
+	replacements := map[string]string{
+		"{plan}":             FormatCurrency(d.Plan, unit),
+		"{actual}":           FormatCurrency(d.Actual, unit),
+		"{remaining}":        FormatCurrency(d.Remaining, unit),
+		"{attained_percent}": fmt.Sprintf("%.1f%%", d.Attained),
+		"{remaining_percent}": fmt.Sprintf("%.1f%%", d.Outstanding),
+		"{plan_label}":       d.PlanLabel,
+		"{actual_label}":     d.ActualLabel,
+		"{period}":           period,
+		"{total}":            FormatCurrency(d.Actual, unit),
+	}
+
+	if d.Elapsed != nil {
+		replacements["{elapsed_percent}"] = fmt.Sprintf("%.1f%%", *d.Elapsed)
+	} else {
+		replacements["{elapsed_percent}"] = ""
+	}
+	if d.Projected != nil {
+		replacements["{projected}"] = FormatCurrency(*d.Projected, unit)
+	} else {
+		replacements["{projected}"] = ""
+	}
+	replacements["{pace}"] = d.Pace
+
+	for k, v := range replacements {
+		out = strings.ReplaceAll(out, k, v)
+	}
+	return strings.TrimSpace(out)
 }

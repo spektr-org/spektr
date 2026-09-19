@@ -66,6 +66,16 @@ func Execute(spec QuerySpec, view RecordView, opts ...Option) (*Result, error) {
 		return executeRatio(spec, view, measure, cfg)
 	}
 
+	// ── PROGRESS / DIFFERENCE / MARGIN (early return) ─────────────────────
+	// Two-operand aggregations. Unlike the others they may read a dataset
+	// Reference, so they cannot be expressed as a fold over records.
+	switch spec.Aggregation {
+	case "progress", "margin":
+		return executeProgress(spec, view, measure, cfg)
+	case "difference":
+		return executeDifference(spec, view, measure, cfg)
+	}
+
 	// ── MULTI-MEASURE COMPARISON CHART (early return) ──────────────────────
 	if spec.Intent == "chart" && len(spec.Measures) > 1 {
 		return executeMultiMeasure(spec, view, cfg)
@@ -260,6 +270,271 @@ func executeRatio(spec QuerySpec, view RecordView, measure string, cfg *config) 
 		DisplayUnit:   unit,
 		ShouldConvert: false,
 	}, nil
+}
+
+// ============================================================================
+// TWO-OPERAND AGGREGATIONS — progress, margin, difference
+// ============================================================================
+
+// resolveOperand returns an operand's value and a label for it.
+//
+// An operand is either a named dataset Reference — the plan — or a sum over a
+// filtered subset of the records — the actual. Everything else in the engine
+// folds over records; these two aggregations are the only place a value can come
+// from outside them.
+func resolveOperand(op *Operand, view RecordView, defaultMeasure string, cfg *config) (float64, string, RecordView, error) {
+	if op == nil {
+		return 0, "", nil, fmt.Errorf("operand is missing")
+	}
+
+	if op.IsReference() {
+		ref, ok := cfg.References[op.Reference]
+		if !ok {
+			// Deliberately an error rather than a zero. A missing plan silently
+			// treated as 0 makes every attainment infinite and every remaining
+			// negative — plausible-looking numbers with nothing behind them.
+			return 0, "", nil, fmt.Errorf("unknown reference %q: supply it with engine.WithReferences", op.Reference)
+		}
+		return ref.Value, op.Reference, nil, nil
+	}
+
+	if op.Filters == nil {
+		return 0, "", nil, fmt.Errorf("operand has neither a reference nor filters")
+	}
+
+	measure := op.Measure
+	if measure == "" {
+		measure = defaultMeasure
+	}
+	sub := ApplyFilters(view, *op.Filters)
+	return SumMeasure(sub, measure), buildFilterLabel(op.Filters), sub, nil
+}
+
+// executeProgress answers how the actual is doing against the plan.
+//
+// "Cycling 2,000 km in six months" is the plan, and the user set it — reading it
+// back tells them nothing. "Currently at 45%, with one month to go" is the
+// answer, and it is the reason this engine is more than a calculator.
+//
+// Both aggregation names land here. "progress" reports the whole picture;
+// "margin" is the same computation when the user asked only for the proportion
+// left, and exists as a separate name because the translator needs a word to
+// pick.
+func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *config) (*Result, error) {
+	plan, planLabel, _, err := resolveOperand(spec.Minuend, view, measure, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("progress minuend: %w", err)
+	}
+	actual, actualLabel, actualView, err := resolveOperand(spec.Subtrahend, view, measure, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("progress subtrahend: %w", err)
+	}
+
+	// A zero plan is an error, not a zero.
+	//
+	// ratio returns 0 when its denominator is 0; progress must not copy that. A
+	// project with no contract value has an UNDEFINED attainment, and "0%" reads
+	// as "nothing done yet" — a plausible figure standing in for an absent one,
+	// which is the failure this whole aggregation exists to prevent.
+	if plan == 0 {
+		return nil, fmt.Errorf("progress against a zero plan is undefined: %q has no value", planLabel)
+	}
+
+	remaining := plan - actual
+	data := &ProgressData{
+		Plan:        plan,
+		Actual:      actual,
+		Remaining:   remaining,
+		Attained:    (actual / plan) * 100,
+		Outstanding: (remaining / plan) * 100,
+		PlanLabel:   planLabel,
+		ActualLabel: actualLabel,
+	}
+
+	// Pace — only when the caller told us how far through the plan period we are.
+	if ref, ok := cfg.References[spec.Minuend.Reference]; ok && ref.Elapsed != nil {
+		elapsedPct := *ref.Elapsed * 100
+		data.Elapsed = &elapsedPct
+
+		switch {
+		case *ref.Elapsed <= 0:
+			// Nothing has elapsed; a rate cannot be projected from no time.
+			data.Pace = "on track"
+		default:
+			projected := actual / *ref.Elapsed
+			data.Projected = &projected
+			data.Pace = pace(data.Attained, elapsedPct)
+		}
+	}
+
+	unit := cfg.BaseCurrency
+	if unit == "" && actualView != nil {
+		unit = inferUnit(actualView, cfg.CurrencyDimension)
+	}
+
+	// "margin" asked only for the proportion; "progress" for the whole picture.
+	displayValue := fmt.Sprintf("%.1f%%", data.Attained)
+	if spec.Aggregation == "margin" {
+		displayValue = fmt.Sprintf("%.1f%%", data.Outstanding)
+	}
+
+	period := ""
+	if actualView != nil {
+		period = DerivePeriod(actualView)
+	}
+
+	textData := &TextData{
+		Value:    displayValue,
+		RawValue: data.Attained,
+		Unit:     unit,
+		Period:   period,
+		Count:    viewLen(actualView),
+		Progress: data,
+	}
+	if spec.Aggregation == "margin" {
+		textData.RawValue = data.Outstanding
+	}
+
+	reply := resolveProgressPlaceholders(spec.Reply, data, unit, period)
+
+	// A chart if one was asked for. Progress is the one addition here with an
+	// obvious visual: the bar against the line says "not there yet" faster than
+	// the sentence does.
+	var chart *ChartConfig
+	resultType := "text"
+	if spec.Intent == "chart" && actualView != nil {
+		groups := GroupAndAggregate(actualView, spec.GroupBy, measure, "sum", spec.SortBy, spec.Limit)
+		chart = BuildProgressChart(spec, data, groups)
+		resultType = "chart"
+	}
+
+	log.Printf("📊 Spektr: Progress — %s of %s = %.1f%% attained, %.1f%% remaining%s",
+		FormatCurrency(actual, unit), FormatCurrency(plan, unit),
+		data.Attained, data.Outstanding, paceSuffix(data))
+
+	return &Result{
+		Success:       true,
+		Type:          resultType,
+		Reply:         reply,
+		Title:         spec.Title,
+		ChartConfig:   chart,
+		Data:          textData,
+		DisplayUnit:   unit,
+		ShouldConvert: false,
+	}, nil
+}
+
+// executeDifference subtracts one operand from another.
+//
+// It exists for the cases with no plan at all — invoiced minus received, where
+// both operands are filtered sets of records and nothing was promised in
+// advance. Where a plan IS involved, progress says more and says it better.
+func executeDifference(spec QuerySpec, view RecordView, measure string, cfg *config) (*Result, error) {
+	minuend, minLabel, minView, err := resolveOperand(spec.Minuend, view, measure, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("difference minuend: %w", err)
+	}
+	subtrahend, subLabel, subView, err := resolveOperand(spec.Subtrahend, view, measure, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("difference subtrahend: %w", err)
+	}
+
+	diff := minuend - subtrahend
+	data := &DifferenceData{
+		MinuendValue:    minuend,
+		SubtrahendValue: subtrahend,
+		Difference:      diff,
+		MinuendLabel:    minLabel,
+		SubtrahendLabel: subLabel,
+	}
+
+	unit := cfg.BaseCurrency
+	if unit == "" {
+		unit = inferUnit(firstNonNil(minView, subView, view), cfg.CurrencyDimension)
+	}
+
+	period := DerivePeriod(newConcatView(orEmpty(minView, view), orEmpty(subView, view)))
+
+	textData := &TextData{
+		Value:      FormatCurrency(diff, unit),
+		RawValue:   diff,
+		Unit:       unit,
+		Period:     period,
+		Count:      viewLen(minView) + viewLen(subView),
+		Difference: data,
+	}
+
+	reply := spec.Reply
+	for k, v := range map[string]string{
+		"{difference}":       FormatCurrency(diff, unit),
+		"{minuend_total}":    FormatCurrency(minuend, unit),
+		"{subtrahend_total}": FormatCurrency(subtrahend, unit),
+		"{minuend_label}":    minLabel,
+		"{subtrahend_label}": subLabel,
+		"{period}":           period,
+		"{total}":            FormatCurrency(diff, unit),
+	} {
+		reply = strings.ReplaceAll(reply, k, v)
+	}
+
+	log.Printf("📊 Spektr: Difference — %s − %s = %s",
+		FormatCurrency(minuend, unit), FormatCurrency(subtrahend, unit), FormatCurrency(diff, unit))
+
+	return &Result{
+		Success:       true,
+		Type:          "text",
+		Reply:         reply,
+		Data:          textData,
+		DisplayUnit:   unit,
+		ShouldConvert: false,
+	}, nil
+}
+
+// pace compares what has been attained against how much of the plan period has
+// gone. A tolerance band keeps a reading of 49.8% against 50% from being called
+// "behind" — that is noise, not a finding, and an alert fired on it is one a
+// user learns to ignore.
+const paceTolerancePct = 5.0
+
+func pace(attainedPct, elapsedPct float64) string {
+	switch {
+	case attainedPct > elapsedPct+paceTolerancePct:
+		return "ahead"
+	case attainedPct < elapsedPct-paceTolerancePct:
+		return "behind"
+	default:
+		return "on track"
+	}
+}
+
+func paceSuffix(d *ProgressData) string {
+	if d.Pace == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (%s)", d.Pace)
+}
+
+func viewLen(v RecordView) int {
+	if v == nil {
+		return 0
+	}
+	return v.Len()
+}
+
+func orEmpty(v, fallback RecordView) RecordView {
+	if v == nil {
+		return fallback
+	}
+	return v
+}
+
+func firstNonNil(views ...RecordView) RecordView {
+	for _, v := range views {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
 }
 
 // ============================================================================
