@@ -276,6 +276,38 @@ func executeRatio(spec QuerySpec, view RecordView, measure string, cfg *config) 
 // TWO-OPERAND AGGREGATIONS — progress, margin, difference
 // ============================================================================
 
+// normalizeCurrency wraps a view so measures read in the base currency.
+//
+// The main Execute path does this at step 2, AFTER the early returns. Every
+// two-operand aggregation returns before reaching it, so each one has to do it
+// itself — and for a while progress did not.
+//
+// The bug that found this, TPL staging 19 Sep: "what is my total profit" across
+// three projects answered 66.3% used. The PLAN was converted to INR by the
+// caller (₹385,187.97, including a S$1,000 target at 75.19) but the ACTUAL was
+// summed raw — S$700 counted as 700 rupees rather than ₹52,631.58. Plan in one
+// currency, actual in another, a percentage computed across the two, and no
+// error anywhere.
+//
+// A comparison is only meaningful if both sides are in the same unit. That is
+// this function's whole job.
+func normalizeCurrency(view RecordView, measure string, cfg *config) (RecordView, string) {
+	unit := cfg.BaseCurrency
+	if cfg.BaseCurrency == "" || cfg.CurrencyDimension == "" || len(cfg.ExchangeRates) == 0 {
+		if unit == "" {
+			unit = inferUnit(view, cfg.CurrencyDimension)
+		}
+		return view, unit
+	}
+
+	displayUnit, needsConversion := detectDisplayCurrency(view, cfg.CurrencyDimension, cfg.BaseCurrency)
+	if !needsConversion {
+		return view, displayUnit
+	}
+	return newCurrencyView(view, measure, cfg.CurrencyDimension, cfg.BaseCurrency, cfg.ExchangeRates),
+		cfg.BaseCurrency
+}
+
 // resolveOperand returns an operand's value and a label for it.
 //
 // An operand is either a named dataset Reference — the plan — or a sum over a
@@ -321,6 +353,11 @@ func resolveOperand(op *Operand, view RecordView, defaultMeasure string, cfg *co
 // left, and exists as a separate name because the translator needs a word to
 // pick.
 func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *config) (*Result, error) {
+	// Both sides in the same unit before either is measured. The plan arrives
+	// already in the base currency — the caller knows what its collection was
+	// promised in — so only the rows need wrapping.
+	view, unit := normalizeCurrency(view, measure, cfg)
+
 	plan, planLabel, _, err := resolveOperand(spec.Minuend, view, measure, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("progress minuend: %w", err)
@@ -365,11 +402,6 @@ func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *confi
 			data.Projected = &projected
 			data.Pace = pace(data.Attained, elapsedPct)
 		}
-	}
-
-	unit := cfg.BaseCurrency
-	if unit == "" && actualView != nil {
-		unit = inferUnit(actualView, cfg.CurrencyDimension)
 	}
 
 	// "margin" asked only for the proportion; "progress" for the whole picture.
@@ -430,6 +462,9 @@ func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *confi
 // both operands are filtered sets of records and nothing was promised in
 // advance. Where a plan IS involved, progress says more and says it better.
 func executeDifference(spec QuerySpec, view RecordView, measure string, cfg *config) (*Result, error) {
+	// Same unit on both sides, for the same reason as progress.
+	view, unit := normalizeCurrency(view, measure, cfg)
+
 	minuend, minLabel, minView, err := resolveOperand(spec.Minuend, view, measure, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("difference minuend: %w", err)
@@ -446,11 +481,6 @@ func executeDifference(spec QuerySpec, view RecordView, measure string, cfg *con
 		Difference:      diff,
 		MinuendLabel:    minLabel,
 		SubtrahendLabel: subLabel,
-	}
-
-	unit := cfg.BaseCurrency
-	if unit == "" {
-		unit = inferUnit(firstNonNil(minView, subView, view), cfg.CurrencyDimension)
 	}
 
 	period := DerivePeriod(newConcatView(orEmpty(minView, view), orEmpty(subView, view)))
@@ -528,20 +558,6 @@ func orEmpty(v, fallback RecordView) RecordView {
 	return v
 }
 
-func firstNonNil(views ...RecordView) RecordView {
-	for _, v := range views {
-		if v != nil {
-			return v
-		}
-	}
-	return nil
-}
-
-// ============================================================================
-// PLACEHOLDER RESOLUTION
-// ============================================================================
-
-// ResolvePlaceholders substitutes computed values into the reply template.
 func ResolvePlaceholders(template string, groups []Group, view RecordView, measure string, unit string) string {
 	if template == "" {
 		return buildDefaultReply(view, measure, unit)

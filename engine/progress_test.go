@@ -373,3 +373,71 @@ func TestProgress_ChartCarriesThePlanAsAReferenceLine(t *testing.T) {
 		t.Error("a progress chart should still carry ProgressData")
 	}
 }
+
+// ── currency ────────────────────────────────────────────────────────────────
+
+func mixedCurrencyView() RecordView {
+	// Two projects: one billing in INR, one in SGD.
+	return NewSliceView([]Record{
+		{Dimensions: map[string]string{"currency": "INR", "category": "Expense"},
+		 Measures: map[string]float64{"amount": 104500}},
+		{Dimensions: map[string]string{"currency": "SGD", "category": "Expense"},
+		 Measures: map[string]float64{"amount": 700}},
+	})
+}
+
+func TestProgress_ConvertsTheActualBeforeComparingIt(t *testing.T) {
+	// TPL staging, 19 Sep: "what is my total profit" across three projects said
+	// 66.3% used. The PLAN had been converted to INR by the caller; the ACTUAL
+	// was summed raw, so S$700 counted as 700 rupees instead of ₹52,631.58.
+	// Plan in one currency, actual in another, a percentage across the two, and
+	// no error anywhere.
+	//
+	// Execute normalises currency at step 2, after the early returns — so every
+	// two-operand aggregation has to do it itself.
+	spec := QuerySpec{
+		Intent:      "text",
+		Aggregation: "progress",
+		Measure:     "amount",
+		Minuend:     &Operand{Reference: "contract_value"},
+		Subtrahend:  &Operand{Filters: &Filters{Dimensions: map[string][]string{"category": {"Expense"}}}},
+	}
+
+	res, err := Execute(spec, mixedCurrencyView(),
+		WithCurrency("INR", "currency", map[string]float64{"SGD": 75.19, "INR": 1}),
+		WithReferences(map[string]Reference{"contract_value": {Value: 385187.97}}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	d := progressOf(t, res)
+	// 104,500 + (700 × 75.19) = 157,133. NOT 105,200.
+	if d.Actual < 157000 || d.Actual > 157200 {
+		t.Fatalf("actual = %.2f — the SGD row was not converted", d.Actual)
+	}
+	if !near(d.Plan, 385187.97) {
+		t.Errorf("plan = %.2f, want 385187.97", d.Plan)
+	}
+}
+
+func TestDifference_ConvertsBothSides(t *testing.T) {
+	spec := QuerySpec{
+		Intent:      "text",
+		Aggregation: "difference",
+		Measure:     "amount",
+		Minuend:     &Operand{Filters: &Filters{Dimensions: map[string][]string{"currency": {"INR"}}}},
+		Subtrahend:  &Operand{Filters: &Filters{Dimensions: map[string][]string{"currency": {"SGD"}}}},
+	}
+
+	res, err := Execute(spec, mixedCurrencyView(),
+		WithCurrency("INR", "currency", map[string]float64{"SGD": 75.19, "INR": 1}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 104,500 − (700 × 75.19) = 51,867.
+	d := res.Data.(*TextData).Difference
+	if d.SubtrahendValue < 52000 || d.SubtrahendValue > 52700 {
+		t.Errorf("subtrahend = %.2f — not converted", d.SubtrahendValue)
+	}
+}
