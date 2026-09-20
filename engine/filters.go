@@ -37,7 +37,19 @@ func ApplyFilters(view RecordView, filters Filters) RecordView {
 	for i := 0; i < n; i++ {
 		pass := true
 		for dim, set := range sets {
-			val := strings.ToLower(view.Dimension(i, dim))
+			// getDimensionValue, not view.Dimension: it knows the VIRTUAL
+			// dimensions — "year", derived from "month" — that no adapter
+			// defines an accessor for.
+			//
+			// Grouping has always gone through it; filtering did not, so a
+			// dataset could be GROUPED by year and not FILTERED by it. Asking
+			// for 2018–2022 read every record's "year" as empty, matched
+			// nothing, and answered "no data for that period" over a chart
+			// plainly showing those years. TPL staging, 20 Sep.
+			//
+			// The asymmetry was invisible because the two paths are in
+			// different files and only one of them was ever wrong.
+			val := strings.ToLower(getDimensionValue(view, i, dim))
 			if !set[val] {
 				pass = false
 				break
