@@ -250,6 +250,9 @@ func TestMargin_ReportsTheProportionLeft(t *testing.T) {
 	if !near(td.RawValue, 55) {
 		t.Errorf("margin raw value = %.2f, want 55", td.RawValue)
 	}
+	if !strings.Contains(td.Value, "55.0%") {
+		t.Errorf("margin headline = %q, want the percentage", td.Value)
+	}
 	if td.Progress == nil {
 		t.Error("margin should still carry the full ProgressData")
 	}
@@ -420,7 +423,14 @@ func TestProgress_ConvertsTheActualBeforeComparingIt(t *testing.T) {
 	}
 }
 
-func TestDifference_ConvertsBothSides(t *testing.T) {
+func TestDifference_CurrencyFiltersStillWork(t *testing.T) {
+	// The first version of the currency fix converted the whole view BEFORE
+	// filtering, and newCurrencyView rewrites the currency dimension to the
+	// base — so a filter on currency="SGD" matched nothing and the operand
+	// summed zero. Execute filters then converts; these paths must too.
+	//
+	// This test is the canary: it filters ON the currency dimension, which only
+	// works if the conversion happens after.
 	spec := QuerySpec{
 		Intent:      "text",
 		Aggregation: "difference",
@@ -435,9 +445,68 @@ func TestDifference_ConvertsBothSides(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// 104,500 − (700 × 75.19) = 51,867.
 	d := res.Data.(*TextData).Difference
+	if d.MinuendValue != 104500 {
+		t.Errorf("minuend = %.2f, want 104500 — the INR filter swept the SGD row too", d.MinuendValue)
+	}
+	// One SGD row, 700 at 75.19 = 52,633. Zero here means the filter found
+	// nothing because the dimension had already been rewritten.
 	if d.SubtrahendValue < 52000 || d.SubtrahendValue > 52700 {
-		t.Errorf("subtrahend = %.2f — not converted", d.SubtrahendValue)
+		t.Errorf("subtrahend = %.2f — want ~52633, converted and matched", d.SubtrahendValue)
+	}
+}
+
+func TestRatio_ConvertsBothSides(t *testing.T) {
+	// executeRatio had the same flaw as progress, for longer. "What percent of
+	// my salary went to India" over SGD income and INR transfers computed a
+	// percentage across two currencies — a number that looks like a percentage
+	// and is wrong by the exchange rate.
+	view := NewSliceView([]Record{
+		{Dimensions: map[string]string{"currency": "SGD", "category": "Income"},
+		 Measures: map[string]float64{"amount": 1000}},
+		{Dimensions: map[string]string{"currency": "INR", "category": "Transfer"},
+		 Measures: map[string]float64{"amount": 37595}},
+	})
+
+	spec := QuerySpec{
+		Intent:         "text",
+		Aggregation:    "ratio",
+		Measure:        "amount",
+		Filters:        Filters{Dimensions: map[string][]string{"category": {"Income"}}},
+		CompareFilters: &Filters{Dimensions: map[string][]string{"category": {"Transfer"}}},
+	}
+
+	res, err := Execute(spec, view,
+		WithCurrency("INR", "currency", map[string]float64{"SGD": 75.19, "INR": 1}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Salary is ₹75,190; the transfer is ₹37,595 — half of it. Unconverted it
+	// would read as 3759500%, which is not a subtle failure, but a smaller
+	// currency gap would have been.
+	r := res.Data.(*TextData).Ratio
+	if r.Percentage < 49 || r.Percentage > 51 {
+		t.Errorf("ratio = %.1f%%, want ~50 — a side was not converted", r.Percentage)
+	}
+}
+
+func TestProgress_HeadlineIsTheAmountNotAPercentage(t *testing.T) {
+	// Staging, 19 Sep: the panel showed "79.7%" above the sentence "a 20.3%
+	// margin" — the two complements side by side, contradicting each other.
+	//
+	// Attained and Outstanding are both correct and neither is the headline: a
+	// profit question reads one end, a budget question the other. The remaining
+	// AMOUNT is true under both, so that is what the headline carries and the
+	// percentage stays in the sentence, where the template has already chosen.
+	res, _ := Execute(progressSpec(), cyclingView(),
+		WithReferences(map[string]Reference{"distance_goal": {Value: 2000}}))
+
+	td := res.Data.(*TextData)
+	if strings.Contains(td.Value, "%") {
+		t.Errorf("headline = %q — a percentage here contradicts half the questions", td.Value)
+	}
+	if !near(td.RawValue, 1100) {
+		t.Errorf("headline raw value = %.0f, want the remaining 1100", td.RawValue)
 	}
 }

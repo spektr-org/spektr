@@ -205,21 +205,28 @@ func executeMultiMeasure(spec QuerySpec, view RecordView, cfg *config) (*Result,
 // ============================================================================
 
 func executeRatio(spec QuerySpec, view RecordView, measure string, cfg *config) (*Result, error) {
+	// Both sides in the same unit before either is measured.
+	//
+	// This predates progress and had the flaw for longer: Execute normalises
+	// currency at step 2, and every early return happens before it. "What
+	// percent of my salary went to India" over SGD income and INR transfers was
+	// computing a percentage across two currencies — a number that looks like a
+	// percentage and is off by the exchange rate.
+	//
+	// Filter FIRST, convert after: newCurrencyView rewrites the currency
+	// dimension to the base, so converting first leaves a filter on
+	// currency="SGD" with nothing to match.
+	unit := displayUnitFor(view, cfg)
+
 	denominator := ApplyFilters(view, spec.Filters)
 	numerator := ApplyFilters(view, *spec.CompareFilters)
 
-	denomSum := SumMeasure(denominator, measure)
-	numSum := SumMeasure(numerator, measure)
+	denomSum := SumMeasure(toBaseView(denominator, measure, cfg), measure)
+	numSum := SumMeasure(toBaseView(numerator, measure, cfg), measure)
 
 	var pct float64
 	if denomSum > 0 {
 		pct = (numSum / denomSum) * 100
-	}
-
-	// Detect display unit
-	unit := cfg.BaseCurrency
-	if unit == "" {
-		unit = inferUnit(denominator, cfg.CurrencyDimension)
 	}
 
 	numLabel := buildFilterLabel(spec.CompareFilters)
@@ -276,36 +283,27 @@ func executeRatio(spec QuerySpec, view RecordView, measure string, cfg *config) 
 // TWO-OPERAND AGGREGATIONS — progress, margin, difference
 // ============================================================================
 
-// normalizeCurrency wraps a view so measures read in the base currency.
-//
-// The main Execute path does this at step 2, AFTER the early returns. Every
-// two-operand aggregation returns before reaching it, so each one has to do it
-// itself — and for a while progress did not.
-//
-// The bug that found this, TPL staging 19 Sep: "what is my total profit" across
-// three projects answered 66.3% used. The PLAN was converted to INR by the
-// caller (₹385,187.97, including a S$1,000 target at 75.19) but the ACTUAL was
-// summed raw — S$700 counted as 700 rupees rather than ₹52,631.58. Plan in one
-// currency, actual in another, a percentage computed across the two, and no
-// error anywhere.
-//
-// A comparison is only meaningful if both sides are in the same unit. That is
-// this function's whole job.
-func normalizeCurrency(view RecordView, measure string, cfg *config) (RecordView, string) {
-	unit := cfg.BaseCurrency
-	if cfg.BaseCurrency == "" || cfg.CurrencyDimension == "" || len(cfg.ExchangeRates) == 0 {
-		if unit == "" {
-			unit = inferUnit(view, cfg.CurrencyDimension)
-		}
-		return view, unit
+// displayUnitFor names the unit an answer is reported in.
+func displayUnitFor(view RecordView, cfg *config) string {
+	if cfg.BaseCurrency != "" {
+		return cfg.BaseCurrency
 	}
+	return inferUnit(view, cfg.CurrencyDimension)
+}
 
-	displayUnit, needsConversion := detectDisplayCurrency(view, cfg.CurrencyDimension, cfg.BaseCurrency)
-	if !needsConversion {
-		return view, displayUnit
+// toBaseView wraps a view so its measures read in the base currency.
+//
+// Unconditional, unlike the main path's detectDisplayCurrency check: a
+// single-currency operand still has to be converted when the OTHER operand is
+// in a different one. Comparing 104,500 INR against 700 SGD is only meaningful
+// once both are the same unit, and neither operand can see the other.
+//
+// With no rates configured it is a no-op, so callers need not check.
+func toBaseView(view RecordView, measure string, cfg *config) RecordView {
+	if cfg.BaseCurrency == "" || cfg.CurrencyDimension == "" || len(cfg.ExchangeRates) == 0 {
+		return view
 	}
-	return newCurrencyView(view, measure, cfg.CurrencyDimension, cfg.BaseCurrency, cfg.ExchangeRates),
-		cfg.BaseCurrency
+	return newCurrencyView(view, measure, cfg.CurrencyDimension, cfg.BaseCurrency, cfg.ExchangeRates)
 }
 
 // resolveOperand returns an operand's value and a label for it.
@@ -338,8 +336,15 @@ func resolveOperand(op *Operand, view RecordView, defaultMeasure string, cfg *co
 	if measure == "" {
 		measure = defaultMeasure
 	}
+	// FILTER FIRST, then convert.
+	//
+	// newCurrencyView rewrites the currency dimension to the base, so a view
+	// converted before filtering has no SGD rows left to match — every row
+	// reads as INR. Execute does filter-then-convert for exactly this reason;
+	// doing it the other way here silently broke currency filters, and the
+	// operand that asked for SGD summed nothing.
 	sub := ApplyFilters(view, *op.Filters)
-	return SumMeasure(sub, measure), buildFilterLabel(op.Filters), sub, nil
+	return SumMeasure(toBaseView(sub, measure, cfg), measure), buildFilterLabel(op.Filters), sub, nil
 }
 
 // executeProgress answers how the actual is doing against the plan.
@@ -353,10 +358,10 @@ func resolveOperand(op *Operand, view RecordView, defaultMeasure string, cfg *co
 // left, and exists as a separate name because the translator needs a word to
 // pick.
 func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *config) (*Result, error) {
-	// Both sides in the same unit before either is measured. The plan arrives
-	// already in the base currency — the caller knows what its collection was
-	// promised in — so only the rows need wrapping.
-	view, unit := normalizeCurrency(view, measure, cfg)
+	// Conversion happens per operand, after each is filtered — see
+	// resolveOperand. The plan arrives already in the base currency, because the
+	// caller knows what its collection was promised in.
+	unit := displayUnitFor(view, cfg)
 
 	plan, planLabel, _, err := resolveOperand(spec.Minuend, view, measure, cfg)
 	if err != nil {
@@ -404,10 +409,26 @@ func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *confi
 		}
 	}
 
-	// "margin" asked only for the proportion; "progress" for the whole picture.
-	displayValue := fmt.Sprintf("%.1f%%", data.Attained)
+	// The headline is the REMAINING AMOUNT, not a percentage.
+	//
+	// Attained and Outstanding are complements, and which one a user is reading
+	// for depends on the question: profit wants what is left over, a budget
+	// wants what has been used. A percentage in the headline is therefore right
+	// for half the questions and wrong for the other half — and it showed:
+	// staging 19 Sep put "79.7%" above the sentence "a 20.3% margin", the two
+	// complements side by side, contradicting each other.
+	//
+	// The remaining AMOUNT is true under both readings. ₹78,056.39 is the
+	// profit and it is also what is left of the contract; no reading of it is
+	// wrong. The percentage stays in the sentence, where the template has
+	// already chosen which end the user asked about.
+	displayValue := FormatCurrency(data.Remaining, unit)
+	rawValue := data.Remaining
+
+	// Except for "margin", where the user asked for the proportion outright.
 	if spec.Aggregation == "margin" {
 		displayValue = fmt.Sprintf("%.1f%%", data.Outstanding)
+		rawValue = data.Outstanding
 	}
 
 	period := ""
@@ -417,14 +438,11 @@ func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *confi
 
 	textData := &TextData{
 		Value:    displayValue,
-		RawValue: data.Attained,
+		RawValue: rawValue,
 		Unit:     unit,
 		Period:   period,
 		Count:    viewLen(actualView),
 		Progress: data,
-	}
-	if spec.Aggregation == "margin" {
-		textData.RawValue = data.Outstanding
 	}
 
 	reply := resolveProgressPlaceholders(spec.Reply, data, unit, period)
@@ -462,8 +480,8 @@ func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *confi
 // both operands are filtered sets of records and nothing was promised in
 // advance. Where a plan IS involved, progress says more and says it better.
 func executeDifference(spec QuerySpec, view RecordView, measure string, cfg *config) (*Result, error) {
-	// Same unit on both sides, for the same reason as progress.
-	view, unit := normalizeCurrency(view, measure, cfg)
+	// Same unit on both sides, converted per operand after filtering.
+	unit := displayUnitFor(view, cfg)
 
 	minuend, minLabel, minView, err := resolveOperand(spec.Minuend, view, measure, cfg)
 	if err != nil {
