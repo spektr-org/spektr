@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"log"
 	"regexp"
 	"strings"
 )
@@ -58,7 +57,7 @@ func Execute(spec QuerySpec, view RecordView, opts ...Option) (*Result, error) {
 	trace("QuerySpec: intent=%q aggregation=%q measure=%q groupBy=%v filters=%v",
 		spec.Intent, spec.Aggregation, measure, spec.GroupBy, spec.Filters.Dimensions)
 
-	log.Printf("🔧 Spektr: Processing %d records, intent=%s, visualize=%s, aggregation=%s, measure=%s",
+	logf("🔧 Spektr: Processing %d records, intent=%s, visualize=%s, aggregation=%s, measure=%s",
 		view.Len(), spec.Intent, spec.Visualize, spec.Aggregation, measure)
 
 	// ── RATIO AGGREGATION (early return) ──────────────────────────────────
@@ -92,7 +91,7 @@ func Execute(spec QuerySpec, view RecordView, opts ...Option) (*Result, error) {
 		}, nil
 	}
 
-	log.Printf("🔧 Spektr: %d records after filtering (from %d)", filtered.Len(), view.Len())
+	logf("🔧 Spektr: %d records after filtering (from %d)", filtered.Len(), view.Len())
 
 	// 2. Currency normalization — wrap in CurrencyView (zero-copy)
 	displayUnit := cfg.BaseCurrency
@@ -100,7 +99,7 @@ func Execute(spec QuerySpec, view RecordView, opts ...Option) (*Result, error) {
 	if cfg.BaseCurrency != "" && cfg.CurrencyDimension != "" && len(cfg.ExchangeRates) > 0 {
 		displayUnit, needsConversion = detectDisplayCurrency(filtered, cfg.CurrencyDimension, cfg.BaseCurrency)
 		if needsConversion {
-			log.Printf("💱 Spektr: Multi-currency detected, normalizing to %s", cfg.BaseCurrency)
+			logf("💱 Spektr: Multi-currency detected, normalizing to %s", cfg.BaseCurrency)
 			filtered = newCurrencyView(filtered, measure, cfg.CurrencyDimension, cfg.BaseCurrency, cfg.ExchangeRates)
 			displayUnit = cfg.BaseCurrency
 		}
@@ -176,7 +175,7 @@ func executeMultiMeasure(spec QuerySpec, view RecordView, cfg *config) (*Result,
 		}, nil
 	}
 
-	log.Printf("📊 Spektr: Multi-measure chart — measures=%v, groupBy=%v", spec.Measures, spec.GroupBy)
+	logf("📊 Spektr: Multi-measure chart — measures=%v, groupBy=%v", spec.Measures, spec.GroupBy)
 
 	chartConfig := BuildMultiMeasureChart(spec, filtered, spec.Measures)
 	if chartConfig == nil {
@@ -267,7 +266,7 @@ func executeRatio(spec QuerySpec, view RecordView, measure string, cfg *config) 
 		reply = strings.ReplaceAll(reply, k, v)
 	}
 
-	log.Printf("📊 Spektr: Ratio — %s / %s = %.1f%%", numLabel, denomLabel, pct)
+	logf("📊 Spektr: Ratio — %s / %s = %.1f%%", numLabel, denomLabel, pct)
 
 	return &Result{
 		Success:       true,
@@ -458,8 +457,7 @@ func executeProgress(spec QuerySpec, view RecordView, measure string, cfg *confi
 		resultType = "chart"
 	}
 
-	log.Printf("📊 Spektr: Progress — %s of %s = %.1f%% attained, %.1f%% remaining%s",
-		FormatCurrency(actual, unit), FormatCurrency(plan, unit),
+	logf("📊 Spektr: Progress — %.1f%% attained, %.1f%% remaining%s",
 		data.Attained, data.Outstanding, paceSuffix(data))
 
 	return &Result{
@@ -525,8 +523,7 @@ func executeDifference(spec QuerySpec, view RecordView, measure string, cfg *con
 		reply = strings.ReplaceAll(reply, k, v)
 	}
 
-	log.Printf("📊 Spektr: Difference — %s − %s = %s",
-		FormatCurrency(minuend, unit), FormatCurrency(subtrahend, unit), FormatCurrency(diff, unit))
+	logf("📊 Spektr: Difference — %s − %s", minLabel, subLabel)
 
 	return &Result{
 		Success:       true,
@@ -668,7 +665,7 @@ func NormalizeQuerySpec(spec QuerySpec) QuerySpec {
 	}
 
 	if changed {
-		log.Printf("🔧 NormalizeQuerySpec: Adjusted → intent=%s, groupBy=%v, aggregation=%s",
+		logf("🔧 NormalizeQuerySpec: Adjusted → intent=%s, groupBy=%v, aggregation=%s",
 			spec.Intent, spec.GroupBy, spec.Aggregation)
 	}
 
